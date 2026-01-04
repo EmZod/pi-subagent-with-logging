@@ -15,7 +15,11 @@ AGENT_NAME="${2:?Usage: $0 <workspace-dir> <agent-name> \"<prompt>\"}"
 PROMPT="${3:?Usage: $0 <workspace-dir> <agent-name> \"<prompt>\"}"
 
 # Resolve paths
-WORKSPACE_DIR="$(cd "$WORKSPACE_DIR" 2>/dev/null && pwd || mkdir -p "$WORKSPACE_DIR" && cd "$WORKSPACE_DIR" && pwd)"
+if [ ! -d "$WORKSPACE_DIR" ]; then
+    mkdir -p "$WORKSPACE_DIR"
+fi
+WORKSPACE_DIR="$(cd "$WORKSPACE_DIR" && pwd)"
+
 HOOK_PATH="$(dirname "$0")/../src/shadow-git.ts"
 HOOK_PATH="$(cd "$(dirname "$HOOK_PATH")" && pwd)/$(basename "$HOOK_PATH")"
 
@@ -35,20 +39,33 @@ echo "Agent: $AGENT_NAME"
 echo "Hook: $HOOK_PATH"
 echo ""
 
-# Spawn in tmux
-tmux new-session -d -s "$AGENT_NAME" \
-    "cd '$AGENT_DIR' && \
-     PI_WORKSPACE_ROOT='$WORKSPACE_DIR' \
-     PI_AGENT_NAME='$AGENT_NAME' \
-     pi \
-       --model claude-haiku-4-5 \
-       --tools read,write,bash \
-       --max-turns 30 \
-       --no-input \
-       --hook '$HOOK_PATH' \
-       '$PROMPT' \
-       2>&1 | tee output/run.log; \
-     echo 'Agent completed. Press enter to close.'; read"
+# Write spawn script to temp file to avoid shell quoting issues
+# This ensures all arguments are passed correctly to pi
+SPAWN_SCRIPT=$(mktemp)
+cat > "$SPAWN_SCRIPT" << SPAWN_EOF
+#!/bin/bash
+cd "$AGENT_DIR"
+export PI_WORKSPACE_ROOT="$WORKSPACE_DIR"
+export PI_AGENT_NAME="$AGENT_NAME"
+
+pi \\
+  --model claude-haiku-4-5 \\
+  --tools read,write,bash \\
+  --max-turns 30 \\
+  --no-input \\
+  --hook "$HOOK_PATH" \\
+  "$PROMPT" \\
+  2>&1 | tee output/run.log
+
+echo ""
+echo "Agent completed. Press enter to close."
+read
+SPAWN_EOF
+
+chmod +x "$SPAWN_SCRIPT"
+
+# Spawn in tmux using the temp script
+tmux new-session -d -s "$AGENT_NAME" "bash '$SPAWN_SCRIPT'"
 
 echo "Spawned agent '$AGENT_NAME' in tmux session"
 echo ""

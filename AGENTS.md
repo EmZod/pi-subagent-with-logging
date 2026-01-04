@@ -66,17 +66,23 @@ For orchestrators spawning subagents:
 mkdir -p workspace/agents/scout1/{workspace,output}
 cd workspace && git init
 
-# Spawn agent with hook
-tmux new-session -d -s scout1 \
-  "cd agents/scout1 && \
-   PI_WORKSPACE_ROOT='$(pwd)/..' \
-   PI_AGENT_NAME='scout1' \
-   pi --hook /path/to/src/shadow-git.ts \
-      --model claude-haiku-4-5 \
-      --no-input \
-      'Read plan.md and execute.' \
-      2>&1 | tee output/run.log"
+# Option 1: Use the spawn script (recommended)
+./examples/spawn-with-logging.sh "$(pwd)" scout1 "Read plan.md and execute."
+
+# Option 2: Set env vars before tmux to avoid quoting issues
+WORKSPACE="$(pwd)"
+PI_WORKSPACE_ROOT="$WORKSPACE" \
+PI_AGENT_NAME="scout1" \
+  tmux new-session -d -s scout1 \
+    "cd $WORKSPACE/agents/scout1 && \
+     pi --hook /path/to/src/shadow-git.ts \
+        --model claude-haiku-4-5 \
+        --no-input \
+        \"Read plan.md and execute.\" \
+        2>&1 | tee output/run.log"
 ```
+
+**Warning**: Complex shell quoting in tmux commands can cause arguments to be split incorrectly. If you encounter issues where parts of arguments are sent as prompts, use the spawn script or write a temp script file.
 
 ## Querying Audit Logs
 
