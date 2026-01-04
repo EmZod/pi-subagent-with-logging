@@ -152,3 +152,20 @@ See [AGENTS.md](AGENTS.md) for agent-specific instructions.
 ## License
 
 MIT
+
+## Dashboard
+
+A live monitoring dashboard is included:
+
+```bash
+./examples/dashboard.sh /path/to/workspace 3
+
+# Shows:
+# - Agent status (running/done/failed)
+# - Turns, tool calls, elapsed time
+# - Hot paths (most-used tools)
+# - Recent git commits (audit trail)
+# - Errors highlighted
+```
+
+Requires the shadow-git hook to be active for full metrics.
