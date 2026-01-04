@@ -49,6 +49,16 @@ git add -A && git commit -m "Initial workspace"
 
 ### 2. Spawn Agent with Hook
 
+**Option A: Use the spawn script (recommended)**
+
+```bash
+./examples/spawn-with-logging.sh ~/workspaces/task-001 scout1 "Read plan.md and execute."
+```
+
+The script handles workspace initialization, directory creation, and proper shell quoting.
+
+**Option B: Manual spawning**
+
 ```bash
 PI_WORKSPACE_ROOT="$(pwd)" \
 PI_AGENT_NAME="scout1" \
@@ -59,6 +69,8 @@ PI_AGENT_NAME="scout1" \
     --hook ~/.pi/agent/hooks/shadow-git.ts \
     "Read agents/scout1/plan.md and execute."
 ```
+
+> **Note**: When spawning via tmux, shell quoting can cause issues. Set env vars before the tmux command, or use the spawn script to avoid problems.
 
 ### 3. View History
 
