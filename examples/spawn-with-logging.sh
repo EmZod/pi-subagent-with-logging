@@ -32,7 +32,7 @@ fi
 
 # Create agent directory
 AGENT_DIR="$WORKSPACE_DIR/agents/$AGENT_NAME"
-mkdir -p "$AGENT_DIR"/{workspace,output}
+mkdir -p "$AGENT_DIR"/{workspace,output,sessions}
 
 echo "Workspace: $WORKSPACE_DIR"
 echo "Agent: $AGENT_NAME"
@@ -50,6 +50,7 @@ export PI_AGENT_NAME="$AGENT_NAME"
 
 pi \\
   --model claude-haiku-4-5 \\
+  --session-dir "$AGENT_DIR/sessions" \\
   --tools read,write,bash \\
   --max-turns 30 \\
   --no-input \\
