@@ -1,5 +1,5 @@
 /**
- * Shadow Git Hook
+ * Shadow Git Extension
  *
  * Enables git-based orchestration control over subagents:
  * - Commits agent state after each tool call, turn, and agent end
@@ -17,9 +17,15 @@
  *   [agent:turn]  turn {N} complete       - After each turn
  *   [agent:end]   {status}                - When agent completes
  *   [agent:start] initialized             - When agent starts
+ *
+ * MIGRATION (v0.35):
+ *   - HookAPI → ExtensionAPI
+ *   - --hook → --extension / -e
+ *   - hooks/ → extensions/
+ *   - {"hooks": [...]} → {"extensions": [...]}
  */
 
-import type { HookAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, isAbsolute } from "node:path";
 
@@ -33,7 +39,7 @@ interface Config {
 	patchDir: string;
 }
 
-export default function (pi: HookAPI) {
+export default function (pi: ExtensionAPI) {
 	// Parse environment
 	const workspaceRoot = process.env.PI_WORKSPACE_ROOT;
 	const agentName = process.env.PI_AGENT_NAME;
