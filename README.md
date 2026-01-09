@@ -34,6 +34,33 @@ Or use directly with `--hook`:
 pi --hook /path/to/pi-hook-logging/src/shadow-git.ts ...
 ```
 
+## ⚠️ CRITICAL: Model Settings Override
+
+**The `--model` CLI flag is IGNORED by pi.** It uses `~/.pi/agent/settings.json` instead.
+
+Before spawning ANY subagents, force the correct model:
+
+```bash
+cat > ~/.pi/agent/settings.json << 'EOF'
+{
+  "defaultProvider": "anthropic",
+  "defaultModel": "claude-haiku-4-5",
+  "defaultThinkingLevel": "none"
+}
+EOF
+```
+
+**If you skip this, you WILL spawn Opus agents at 15x the cost of Haiku.**
+
+Verify after spawning:
+```bash
+tail -20 agents/*/output/run.log | grep -o "claude-[a-z0-9-]*" | sort -u
+# Should show: claude-haiku-4-5
+# NOT: claude-opus-4-5-thinking
+```
+
+---
+
 ## Usage
 
 ### 1. Create a Shadow Git Workspace

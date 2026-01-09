@@ -84,7 +84,20 @@ tmux kill-server 2>/dev/null
 
 # 3. Check system resources
 uptime  # Load should be < number of CPU cores
+
+# 4. ⚠️ CRITICAL: Force correct model in settings (CLI flags are IGNORED!)
+cat > ~/.pi/agent/settings.json << 'EOF'
+{
+  "defaultProvider": "anthropic",
+  "defaultModel": "claude-haiku-4-5",
+  "defaultThinkingLevel": "none"
+}
+EOF
+echo "Model set to: $(jq -r .defaultModel ~/.pi/agent/settings.json)"
 ```
+
+**⚠️ WARNING: `--model` CLI flag is IGNORED! Pi uses `~/.pi/agent/settings.json` instead.**
+**If you skip step 4, you WILL spawn Opus agents at 15x the cost of Haiku.**
 
 **IF YOU SPAWN IT, YOU OWN IT. CLEAN UP AFTER YOURSELF.**
 
@@ -975,11 +988,20 @@ Decision: {your decision and reasoning}" >> orchestrator/log.md
 
 ### Models
 
-| Model | Use For | Cost |
-|-------|---------|------|
-| `claude-haiku-4-5` | Fast research, simple tasks | Low |
-| `claude-sonnet-4-20250514` | Complex reasoning, implementation | Medium |
-| `claude-opus-4-5` | Hardest problems, synthesis | High |
+| Model | Use For | Cost | Relative |
+|-------|---------|------|----------|
+| `claude-haiku-4-5` | Fast research, simple tasks | ~$0.001/turn | 1x |
+| `claude-sonnet-4-20250514` | Complex reasoning, implementation | ~$0.01/turn | 10x |
+| `claude-opus-4-5` | Hardest problems, synthesis | ~$0.015/turn | 15x |
+| `claude-opus-4-5` + thinking | Extended reasoning | ~$0.05/turn | 50x |
+
+**⚠️ WARNING: CLI `--model` flag is IGNORED!** Pi uses `~/.pi/agent/settings.json`.
+See "Before You Start" section. ALWAYS set settings.json first:
+```bash
+cat > ~/.pi/agent/settings.json << 'EOF'
+{"defaultProvider":"anthropic","defaultModel":"claude-haiku-4-5","defaultThinkingLevel":"none"}
+EOF
+```
 
 ### Tool Sets
 
