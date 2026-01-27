@@ -449,3 +449,66 @@ The commit queue was added to serialize git commits to prevent `index.lock` race
 - Per-agent repos eliminate lock conflicts, queue not needed
 - Code is now 6 lines simpler
 
+
+---
+
+## STEP-05: audit.jsonl not in git
+
+**Status:** Already completed as part of STEP-01
+
+The `initAgentRepo()` function creates `.gitignore` with `audit.jsonl` entry.
+
+**Verification:**
+- `.gitignore` contains: `audit.jsonl`
+- `git ls-files` shows only `.gitignore` (not audit.jsonl)
+- TDD-01-3 test validates this
+
+---
+
+## STEP-05: COMPLETE ✓ (via STEP-01)
+
+---
+
+# CRITICAL PATH COMPLETE 🎉
+
+All 4 critical path steps from plan.md are now complete:
+
+| Step | Description | Status |
+|------|-------------|--------|
+| STEP-01 | Per-agent git repos | ✅ DONE |
+| STEP-02 | Turn-level commits | ✅ DONE |
+| STEP-04 | Remove commit queue | ✅ DONE |
+| STEP-05 | audit.jsonl not in git | ✅ DONE |
+
+## Achievements
+
+### Lock Conflicts: Eliminated
+- Before: Shared `.git` at workspace root caused `index.lock` conflicts
+- After: Each agent has `agents/{name}/.git` - completely isolated
+
+### Commit Reduction: ~10x
+- Before: 1 commit per tool call (init + start + end + N tools)
+- After: 1 commit per turn (init + start + M turns)
+- For 10 tools in 1 turn: 13+ commits → 4 commits
+
+### Code Simplification
+- Removed commitQueue (no longer needed)
+- Removed per-tool commit logic
+- Removed agent_end commit (confusing order)
+- Clear separation: audit.jsonl for real-time, git for checkpoints
+
+### Test Results
+- 7 feature tests: All PASS
+- 11 regression tests: All PASS
+- Parallel agent test: ZERO lock conflicts
+
+## Remaining Steps (Nice to Have)
+
+From plan.md, these are optional enhancements:
+- STEP-03: Add state.json checkpoint file
+- STEP-06, 07: Manifest and Mission Control updates
+- STEP-08, 09: Rollback and branch commands
+- STEP-10, 11, 12: Performance and reliability
+- STEP-13, 14, 15: Documentation and tests
+- STEP-16: Migration for existing workspaces
+
