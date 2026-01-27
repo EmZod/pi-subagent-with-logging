@@ -128,9 +128,6 @@ export default function (pi: ExtensionAPI) {
 		patchesCaptured: 0,
 	};
 
-	// Commit queue to prevent concurrent git operations (race condition fix)
-	let commitQueue: Promise<boolean> = Promise.resolve(true);
-
 	// Track if agent repo is initialized
 	let agentRepoInitialized = false;
 
@@ -242,12 +239,10 @@ export default function (pi: ExtensionAPI) {
 		}
 	}
 
-	// Queue commits to prevent concurrent git operations (index.lock race condition)
+	// Commit to agent's git repo (no queue needed - per-agent repos eliminate lock conflicts)
 	function gitCommit(message: string): Promise<boolean> {
 		if (!enabled) return Promise.resolve(true);
-
-		commitQueue = commitQueue.then(() => gitCommitInternal(message));
-		return commitQueue;
+		return gitCommitInternal(message);
 	}
 
 	function isTargetRepoPath(filePath: string): string | null {

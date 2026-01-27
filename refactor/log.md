@@ -397,3 +397,55 @@ agent initialized          <- git init
 [agent:turn-1] 2 tools     <- turn 1 with work
 ```
 
+
+---
+
+## TDD-04-1: Remove commit queue
+
+### RED
+**Test:** `tests/tdd/tdd-04-1-no-commit-queue.sh`
+**Expected:** FAIL
+**Actual:** FAIL ✓ (commitQueue exists at lines 132, 249, 250)
+**What we're testing:** The commitQueue variable and promise chaining should not exist
+
+**Context:**
+The commit queue was added to serialize git commits to prevent `index.lock` race conditions when multiple commits happened to a shared repo. With per-agent repos (STEP-01), each agent has its own .git, so there's no lock conflict. The queue is now unnecessary complexity.
+
+**Goedecke:** "Complexity is debt" - remove code that's no longer needed.
+
+### GREEN
+**Objective:** Remove commitQueue and promise chaining, call gitCommitInternal directly
+
+**Implementation:**
+1. Remove `let commitQueue: Promise<boolean> = Promise.resolve(true);`
+2. Change `gitCommit()` to call `gitCommitInternal()` directly
+3. Keep async behavior (don't block on commits)
+
+**Implementing now...**
+
+
+**Code changed:** `src/shadow-git.ts`
+1. Removed `let commitQueue: Promise<boolean> = Promise.resolve(true);`
+2. Simplified `gitCommit()` to call `gitCommitInternal()` directly
+
+**Test Results:**
+
+| Test | Result |
+|------|--------|
+| TDD-04-1 (no commitQueue) | PASS ✓ |
+| Parallel agents (lock test) | PASS ✓ |
+| Regression (11 tests) | PASS ✓ |
+
+### REFACTOR
+**Changes:** None needed - code is now simpler
+**All tests:** PASS ✓
+
+---
+
+## TDD-04-1: COMPLETE ✓
+
+**STEP-04 Achievement:** Commit queue removed
+- Removed unnecessary complexity (Goedecke: "Complexity is debt")
+- Per-agent repos eliminate lock conflicts, queue not needed
+- Code is now 6 lines simpler
+
