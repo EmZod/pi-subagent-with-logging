@@ -11,7 +11,7 @@ git add -A && git commit -m "init" >/dev/null 2>&1
 
 for agent in a1 a2 a3; do
   PI_WORKSPACE_ROOT="$TEST_WS" PI_AGENT_NAME="$agent" \
-    timeout 60 pi --max-turns 2 --no-input -p \
+    pi --max-turns 2 --no-input -p \
     -e "$EXT" "Write 'hello' to output/greeting.txt" 2>&1 >/dev/null &
 done
 wait

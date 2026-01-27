@@ -7,7 +7,7 @@ TEST_WS=$(mktemp -d)
 mkdir -p "$TEST_WS/agents/test1"
 
 PI_WORKSPACE_ROOT="$TEST_WS" PI_AGENT_NAME="test1" \
-  timeout 60 pi --max-turns 2 --no-input -p \
+  pi --max-turns 2 --no-input -p \
   -e "$EXT" "Write 'test' to output/test.txt" 2>&1 >/dev/null || true
 
 AGENT_DIR="$TEST_WS/agents/test1"

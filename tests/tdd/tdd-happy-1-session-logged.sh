@@ -1,6 +1,6 @@
 #!/bin/bash
-# TDD-01-1: Agent directory gets its own .git
-# RED: Should FAIL on current code (no per-agent .git)
+# TDD-HAPPY-1: Session start must be logged
+# Behavior: audit.jsonl contains session_start event
 set -e
 EXT="${EXT:-$HOME/.pi/agent/extensions/shadow-git.ts}"
 TEST_WS=$(mktemp -d)
@@ -10,12 +10,15 @@ PI_WORKSPACE_ROOT="$TEST_WS" PI_AGENT_NAME="test1" \
   pi --max-turns 1 --no-input -p \
   -e "$EXT" "hi" 2>&1 >/dev/null || true
 
-if [ -d "$TEST_WS/agents/test1/.git" ]; then
-  echo "PASS: agents/test1/.git exists"
+AUDIT="$TEST_WS/agents/test1/audit.jsonl"
+
+# ASSERTION: session_start event exists
+if grep -q '"event":"session_start"' "$AUDIT" 2>/dev/null; then
+  echo "PASS: session_start logged"
   rm -rf "$TEST_WS"
   exit 0
 else
-  echo "FAIL: agents/test1/.git does NOT exist"
+  echo "FAIL: no session_start in audit log"
   rm -rf "$TEST_WS"
   exit 1
 fi

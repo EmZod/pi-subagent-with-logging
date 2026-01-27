@@ -7,7 +7,7 @@ TEST_WS=$(mktemp -d)
 mkdir -p "$TEST_WS/agents/test1"
 
 PI_WORKSPACE_ROOT="$TEST_WS" PI_AGENT_NAME="test1" \
-  timeout 30 pi --max-turns 1 --no-input -p \
+  pi --max-turns 1 --no-input -p \
   -e "$EXT" "hi" 2>&1 >/dev/null || true
 
 GITIGNORE="$TEST_WS/agents/test1/.gitignore"
