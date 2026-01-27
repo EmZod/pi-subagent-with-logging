@@ -70,6 +70,19 @@ interface AgentState {
 	errors: number;
 }
 
+interface ManifestAgent {
+	status: "pending" | "running" | "done" | "error";
+	spawnedAt: number | null;
+	completedAt: number | null;
+	pid: number | null;
+}
+
+interface Manifest {
+	version: 1;
+	created: number;
+	agents: Record<string, ManifestAgent>;
+}
+
 interface Stats {
 	commits: number;
 	commitErrors: number;
@@ -164,6 +177,47 @@ export default function (pi: ExtensionAPI) {
 			writeFileSync(stateFile, JSON.stringify(state, null, 2) + "\n");
 		} catch (err) {
 			console.error(`[shadow-git] Failed to write state.json: ${err}`);
+		}
+	}
+
+	/**
+	 * Update manifest.json at workspace root.
+	 * This provides a registry of all agents for orchestration.
+	 */
+	function updateManifest(updates: Partial<ManifestAgent>): void {
+		const manifestPath = join(config.workspaceRoot, "manifest.json");
+
+		try {
+			// Read existing manifest or create new one
+			let manifest: Manifest;
+			if (existsSync(manifestPath)) {
+				const content = require("fs").readFileSync(manifestPath, "utf-8");
+				manifest = JSON.parse(content);
+			} else {
+				manifest = {
+					version: 1,
+					created: Date.now(),
+					agents: {},
+				};
+			}
+
+			// Update agent entry
+			const existing = manifest.agents[config.agentName] || {
+				status: "pending",
+				spawnedAt: null,
+				completedAt: null,
+				pid: null,
+			};
+
+			manifest.agents[config.agentName] = { ...existing, ...updates };
+
+			// Atomic write: write to temp file, then rename
+			const tempPath = manifestPath + ".tmp";
+			writeFileSync(tempPath, JSON.stringify(manifest, null, 2) + "\n");
+			require("fs").renameSync(tempPath, manifestPath);
+		} catch (err) {
+			// Fail-open: don't block agent if manifest update fails
+			console.error(`[shadow-git] Failed to update manifest: ${err}`);
 		}
 	}
 
@@ -386,11 +440,24 @@ export default function (pi: ExtensionAPI) {
 		// Initialize per-agent git repo (Goedecke: "one owner, one writer")
 		await initAgentRepo();
 
+		// Register in manifest
+		updateManifest({
+			status: "running",
+			spawnedAt: Date.now(),
+			pid: process.pid,
+		});
+
 		emit("session_start", {});
 		await gitCommit(`[${config.agentName}:start] session began`);
 	});
 
 	pi.on("session_shutdown", async () => {
+		// Update manifest even if disabled
+		updateManifest({
+			status: agentStatus,
+			completedAt: Date.now(),
+		});
+
 		if (!enabled) return;
 
 		emit("session_shutdown", { stats });

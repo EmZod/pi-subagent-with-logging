@@ -573,3 +573,38 @@ From plan.md, these are optional enhancements:
 
 ## TDD-03: COMPLETE ✓
 
+
+---
+
+## TDD-06: manifest.json
+
+### RED
+**Tests:**
+- tdd-06-1-manifest-exists: FAIL ✓
+- tdd-06-2-manifest-has-agent: FAIL ✓
+
+**What we're testing:**
+- manifest.json exists at workspace root
+- Contains agents registry with status
+
+### GREEN
+**Implementation:**
+- Add `updateManifest()` function
+- Call on session_start to register agent
+- Atomic write (write to temp, rename)
+
+
+**Code changed:** `src/shadow-git.ts`
+1. Added `Manifest` and `ManifestAgent` interfaces
+2. Added `updateManifest()` function with atomic write
+3. Call in `session_start` to register agent as "running"
+4. Call in `session_shutdown` to update status to "done"
+
+**Test Results:**
+- TDD-06-1 (manifest exists): PASS ✓
+- TDD-06-2 (has agent): PASS ✓
+
+---
+
+## TDD-06: COMPLETE ✓
+
