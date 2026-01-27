@@ -121,6 +121,9 @@ export default function (pi: ExtensionAPI) {
 		patchesCaptured: 0,
 	};
 
+	// Commit queue to prevent concurrent git operations (race condition fix)
+	let commitQueue: Promise<boolean> = Promise.resolve(true);
+
 	// -------------------------------------------------------------------------
 	// Utility Functions
 	// -------------------------------------------------------------------------
@@ -148,9 +151,7 @@ export default function (pi: ExtensionAPI) {
 		}
 	}
 
-	async function gitCommit(message: string): Promise<boolean> {
-		if (!enabled) return true;
-
+	async function gitCommitInternal(message: string): Promise<boolean> {
 		try {
 			// Stage all changes in agent directory
 			const addAgent = await pi.exec("git", ["-C", config.workspaceRoot, "add", config.agentDir]);
@@ -190,6 +191,14 @@ export default function (pi: ExtensionAPI) {
 			console.error(`[shadow-git] Commit failed (continuing): ${err}`);
 			return false;
 		}
+	}
+
+	// Queue commits to prevent concurrent git operations (index.lock race condition)
+	function gitCommit(message: string): Promise<boolean> {
+		if (!enabled) return Promise.resolve(true);
+
+		commitQueue = commitQueue.then(() => gitCommitInternal(message));
+		return commitQueue;
 	}
 
 	function isTargetRepoPath(filePath: string): string | null {
