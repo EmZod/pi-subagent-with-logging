@@ -1,0 +1,27 @@
+#!/bin/bash
+# TDD-01-2: Agent commits should NOT modify workspace root .git
+# RED: Should FAIL on current code (agents modify root .git)
+set -e
+EXT="${EXT:-$HOME/.pi/agent/extensions/shadow-git.ts}"
+TEST_WS=$(mktemp -d)
+cd "$TEST_WS"
+git init >/dev/null 2>&1
+mkdir -p agents/test1
+git add -A && git commit -m "init" >/dev/null 2>&1
+ROOT_BEFORE=$(git rev-parse HEAD)
+
+PI_WORKSPACE_ROOT="$TEST_WS" PI_AGENT_NAME="test1" \
+  timeout 60 pi --max-turns 2 --no-input -p \
+  -e "$EXT" "Write 'hello' to output/test.txt" 2>&1 >/dev/null || true
+
+ROOT_AFTER=$(git rev-parse HEAD)
+
+if [ "$ROOT_BEFORE" = "$ROOT_AFTER" ]; then
+  echo "PASS: workspace root .git unchanged"
+  rm -rf "$TEST_WS"
+  exit 0
+else
+  echo "FAIL: workspace root .git was modified"
+  rm -rf "$TEST_WS"
+  exit 1
+fi

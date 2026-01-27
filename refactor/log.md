@@ -132,3 +132,70 @@ Files created:
 ---
 
 ## STEP-00.1: COMPLETE ✓
+
+---
+
+## STEP-00.2: Formal TDD Setup
+### Pre-Execution
+**Objective:** Convert to formal Kent Beck TDD with RED-GREEN-REFACTOR cycles
+
+**Beliefs:**
+- Tests must FAIL first (RED) to prove they test new behavior
+- Each test should target ONE specific behavior
+- Implementation is driven by making tests pass (GREEN)
+- Refactoring only happens when all tests are GREEN
+
+### Execution
+
+**Created TDD Protocol:**
+- `TDD-PROTOCOL.md` - Formal TDD rules and cycle format
+- `tests/tdd/` - One test per behavior
+- `tests/run-tdd.sh` - TDD cycle runner
+
+**TDD Tests Created:**
+| Test | Behavior | RED Status |
+|------|----------|------------|
+| tdd-01-1 | Agent has own .git | FAIL ✓ |
+| tdd-01-2 | Root .git unchanged | FAIL ✓ |
+| tdd-01-3 | audit.jsonl gitignored | FAIL ✓ |
+| tdd-01-4 | No lock conflicts | FAIL ✓ |
+| tdd-02-1 | No per-tool commits | FAIL ✓ |
+| tdd-02-2 | Commit at turn end | FAIL ✓ |
+| tdd-04-1 | No commitQueue | FAIL ✓ |
+
+**RED Phase Verified:**
+```
+./tests/run-tdd.sh red
+✅ All tests are RED - ready to implement
+```
+
+All 7 tests FAIL on current code, confirming they test new behavior.
+
+### Post-Execution
+Outcome: PASS
+
+**TDD Cycle Format for Implementation:**
+```
+1. Run test → FAIL (RED)
+2. Write minimum code → test PASSES (GREEN)
+3. Run ALL tests → no regressions
+4. REFACTOR if needed
+5. Log in log.md
+6. Commit: "TDD-{step}-{n}: {behavior}"
+```
+
+---
+
+## STEP-00.2: COMPLETE ✓
+
+---
+
+# IMPLEMENTATION BEGINS HERE
+
+**Next:** TDD-01-1 (Agent has own .git)
+
+**Command to run:**
+```bash
+./tests/run-tdd.sh tdd-01-1
+# Should FAIL (RED) - then implement - then PASS (GREEN)
+```
