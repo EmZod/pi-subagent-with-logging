@@ -514,3 +514,62 @@ From plan.md, these are optional enhancements:
 - STEP-13, 14, 15: Documentation and tests
 - STEP-16: Migration for existing workspaces
 
+
+---
+
+# SESSION 2 CONTINUED: Remaining Steps
+
+**Objective:** Complete ALL remaining steps from plan.md using formal TDD
+
+**Remaining Steps:**
+- STEP-03: Add state.json checkpoint file
+- STEP-06: Add workspace manifest.json
+- STEP-07: Update Mission Control to use manifest
+- STEP-08: Add /rollback command
+- STEP-09: Add /branch command
+- STEP-10: Make git operations fully async
+- STEP-11: Add commit batching with debounce
+- STEP-12: Add health check and recovery
+- STEP-13: Update README
+- STEP-14: Update AGENTS.md
+- STEP-15: Add integration tests
+- STEP-16: Add migration
+
+**Approach:** Create TDD tests for each step, verify RED, implement GREEN, verify all tests pass.
+
+
+---
+
+## TDD-03: state.json checkpoint file
+
+### RED
+**Tests:** 
+- tdd-03-1-state-json-exists: FAIL ✓
+- tdd-03-2-state-json-valid: FAIL ✓
+- tdd-03-3-state-json-in-git: FAIL ✓
+
+**What we're testing:** 
+- state.json exists in agent directory
+- Contains: agent, turn, status, toolCalls, lastTool, lastActivity
+- Is tracked by git (committed with turns)
+
+### GREEN
+**Implementation:**
+
+
+**Code changed:** `src/shadow-git.ts`
+1. Added `AgentState` interface
+2. Added `writeStateCheckpoint()` function
+3. Added state tracking variables: `lastToolName`, `agentStatus`
+4. Call `writeStateCheckpoint()` in `turn_end` before git commit
+5. Update `agentStatus` to "done" in `agent_end`
+
+**Test Results:**
+- TDD-03-1 (state.json exists): PASS ✓
+- TDD-03-2 (valid JSON with fields): PASS ✓
+- TDD-03-3 (tracked by git): PASS ✓
+
+---
+
+## TDD-03: COMPLETE ✓
+

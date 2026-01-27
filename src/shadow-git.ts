@@ -60,6 +60,16 @@ interface AuditEntry {
 	[key: string]: unknown;
 }
 
+interface AgentState {
+	agent: string;
+	turn: number;
+	status: "running" | "done" | "error";
+	toolCalls: number;
+	lastTool: string | null;
+	lastActivity: number;
+	errors: number;
+}
+
 interface Stats {
 	commits: number;
 	commitErrors: number;
@@ -120,6 +130,9 @@ export default function (pi: ExtensionAPI) {
 
 	let currentTurn = 0;
 	let toolCallCount = 0;
+	let lastToolName: string | null = null;
+	let agentStatus: "running" | "done" | "error" = "running";
+
 	const stats: Stats = {
 		commits: 0,
 		commitErrors: 0,
@@ -130,6 +143,29 @@ export default function (pi: ExtensionAPI) {
 
 	// Track if agent repo is initialized
 	let agentRepoInitialized = false;
+
+	/**
+	 * Write state.json checkpoint file.
+	 * This captures agent state for rollback/recovery.
+	 */
+	function writeStateCheckpoint(): void {
+		const state: AgentState = {
+			agent: config.agentName,
+			turn: currentTurn,
+			status: agentStatus,
+			toolCalls: stats.toolCalls,
+			lastTool: lastToolName,
+			lastActivity: Date.now(),
+			errors: stats.commitErrors,
+		};
+
+		try {
+			const stateFile = join(config.agentDir, "state.json");
+			writeFileSync(stateFile, JSON.stringify(state, null, 2) + "\n");
+		} catch (err) {
+			console.error(`[shadow-git] Failed to write state.json: ${err}`);
+		}
+	}
 
 	// -------------------------------------------------------------------------
 	// Utility Functions
@@ -367,11 +403,14 @@ export default function (pi: ExtensionAPI) {
 	// -------------------------------------------------------------------------
 
 	pi.on("agent_end", async (event) => {
+		agentStatus = "done";
+
 		if (!enabled) return;
 
 		emit("agent_end", { messageCount: event.messages.length, stats });
 		// NOTE: No commit here - agent_end fires BEFORE final turn_end
 		// which causes confusing commit order. Turn commits are sufficient.
+		// Final state is captured in state.json during turn_end.
 	});
 
 	// -------------------------------------------------------------------------
@@ -398,6 +437,9 @@ export default function (pi: ExtensionAPI) {
 			toolResultCount: toolCount,
 		});
 
+		// Write state checkpoint before git commit
+		writeStateCheckpoint();
+
 		// Turn-level commits (Goedecke: "Complexity is debt" - 10x fewer commits)
 		// Summary includes tool count for meaningful checkpoints
 		const summary = toolCount > 0 ? `${toolCount} tools` : "no tools";
@@ -412,6 +454,7 @@ export default function (pi: ExtensionAPI) {
 	pi.on("tool_call", async (event) => {
 		toolCallCount++;
 		stats.toolCalls++;
+		lastToolName = event.toolName;
 
 		if (!enabled) return;
 
