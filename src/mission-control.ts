@@ -35,6 +35,8 @@ interface AgentStatus {
 	duration: number;
 	startTime: number | null;
 	endTime: number | null;
+	recentErrors: string[];  // Last few error messages
+	lastTools: string[];     // Last few tool calls for context
 }
 
 interface DashboardState {
@@ -52,7 +54,7 @@ interface DashboardState {
 
 function parseAuditLog(auditPath: string): Partial<AgentStatus> {
 	if (!existsSync(auditPath)) {
-		return { status: "pending", turns: 0, toolCalls: 0, errors: 0 };
+		return { status: "pending", turns: 0, toolCalls: 0, errors: 0, recentErrors: [], lastTools: [] };
 	}
 
 	const content = readFileSync(auditPath, "utf-8");
@@ -66,6 +68,8 @@ function parseAuditLog(auditPath: string): Partial<AgentStatus> {
 	let startTime: number | null = null;
 	let endTime: number | null = null;
 	let status: AgentStatus["status"] = "pending";
+	const recentErrors: string[] = [];
+	const lastTools: string[] = [];
 
 	for (const line of lines) {
 		try {
@@ -87,12 +91,38 @@ function parseAuditLog(auditPath: string): Partial<AgentStatus> {
 					break;
 				case "tool_call":
 					toolCalls++;
+					// Track last few tool calls for context
+					const toolInfo = `${entry.tool || "?"}`;
+					const inputBrief = entry.input?.path || entry.input?.command?.slice(0, 30) || "";
+					lastTools.push(`${toolInfo}: ${inputBrief}`.slice(0, 50));
+					if (lastTools.length > 5) lastTools.shift();
 					break;
 				case "tool_result":
-					if (entry.error) errors++;
+					if (entry.error) {
+						errors++;
+						// Capture error details
+						const tool = entry.tool || "unknown";
+						const errMsg = `[T${entry.turn || "?"}] ${tool} failed`;
+						recentErrors.push(errMsg);
+						if (recentErrors.length > 5) recentErrors.shift();
+					}
 					break;
 				case "commit_error":
 					errors++;
+					// Extract the key part of the error message
+					let commitErr = String(entry.error || entry.message || "git commit failed");
+					// Clean up common git errors
+					if (commitErr.includes("index.lock")) {
+						commitErr = "git lock conflict (another agent using repo)";
+					} else if (commitErr.includes("git add failed")) {
+						commitErr = "git add failed";
+					} else if (commitErr.includes("git commit failed")) {
+						commitErr = "git commit failed";
+					} else {
+						commitErr = commitErr.split("\n")[0].slice(0, 60);
+					}
+					recentErrors.push(`[T${entry.turn || "?"}] ${commitErr}`);
+					if (recentErrors.length > 5) recentErrors.shift();
 					break;
 				case "agent_end":
 				case "session_shutdown":
@@ -119,6 +149,8 @@ function parseAuditLog(auditPath: string): Partial<AgentStatus> {
 		lastActivity,
 		startTime,
 		endTime,
+		recentErrors,
+		lastTools,
 	};
 }
 
@@ -153,6 +185,8 @@ function discoverAgents(workspaceRoot: string): AgentStatus[] {
 			startTime,
 			endTime,
 			duration,
+			recentErrors: parsed.recentErrors || [],
+			lastTools: parsed.lastTools || [],
 		});
 	}
 
@@ -354,14 +388,31 @@ class MissionControlComponent {
 		// Details panel (if showing)
 		if (this.state.showDetails && agents.length > 0) {
 			const agent = agents[this.state.selectedIndex];
-			lines.push(this.pad(theme.fg("accent", "  ┌─ Details: " + agent.name + " ─┐"), width));
+			lines.push(this.pad(theme.fg("accent", "  ┌─ Details: " + agent.name + " ─" + "─".repeat(Math.max(0, 40 - agent.name.length)) + "┐"), width));
 			lines.push(this.pad(`    Status:     ${this.statusIcon(agent.status)} ${agent.status}`, width));
 			lines.push(this.pad(`    Turns:      ${agent.turns}`, width));
 			lines.push(this.pad(`    Tool calls: ${agent.toolCalls}`, width));
 			lines.push(this.pad(`    Errors:     ${agent.errors}`, width));
 			lines.push(this.pad(`    Duration:   ${this.formatDuration(agent.duration)}`, width));
 			lines.push(this.pad(`    Last event: ${agent.lastEvent || "none"}`, width));
-			lines.push(this.pad(theme.fg("accent", "  └" + "─".repeat(30) + "┘"), width));
+			
+			// Show recent tool calls
+			if (agent.lastTools.length > 0) {
+				lines.push(this.pad(theme.fg("muted", "    ─── Recent Tools ───"), width));
+				for (const tool of agent.lastTools.slice(-3)) {
+					lines.push(this.pad(theme.fg("dim", `      ${tool}`), width));
+				}
+			}
+			
+			// Show recent errors (verbose!)
+			if (agent.recentErrors.length > 0) {
+				lines.push(this.pad(theme.fg("error", "    ─── Errors ───"), width));
+				for (const err of agent.recentErrors) {
+					lines.push(this.pad(theme.fg("error", `      ✗ ${err}`), width));
+				}
+			}
+			
+			lines.push(this.pad(theme.fg("accent", "  └" + "─".repeat(50) + "┘"), width));
 			lines.push("");
 		}
 
