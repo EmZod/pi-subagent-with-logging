@@ -1,0 +1,497 @@
+/**
+ * Mission Control - Real-time dashboard for monitoring multiple pi agents
+ *
+ * Provides a TUI overlay showing:
+ * - All agents and their status (running, done, error, pending)
+ * - Turn count, tool calls, errors per agent
+ * - Real-time updates via audit.jsonl parsing
+ * - Scrollable list for 100s of agents
+ *
+ * Usage:
+ *   /mission-control                - Open dashboard
+ *   /mc                             - Alias
+ *
+ * Environment:
+ *   PI_WORKSPACE_ROOT               - Root of shadow git workspace (required)
+ */
+
+import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { matchesKey, truncateToWidth, visibleWidth, type Theme } from "@mariozechner/pi-tui";
+
+// =============================================================================
+// Types
+// =============================================================================
+
+interface AgentStatus {
+	name: string;
+	status: "running" | "done" | "error" | "pending";
+	turns: number;
+	toolCalls: number;
+	errors: number;
+	lastEvent: string;
+	lastActivity: number;
+	duration: number;
+	startTime: number | null;
+	endTime: number | null;
+}
+
+interface DashboardState {
+	agents: AgentStatus[];
+	selectedIndex: number;
+	scrollOffset: number;
+	sortBy: "name" | "status" | "activity";
+	showDetails: boolean;
+	lastRefresh: number;
+}
+
+// =============================================================================
+// Audit Log Parser
+// =============================================================================
+
+function parseAuditLog(auditPath: string): Partial<AgentStatus> {
+	if (!existsSync(auditPath)) {
+		return { status: "pending", turns: 0, toolCalls: 0, errors: 0 };
+	}
+
+	const content = readFileSync(auditPath, "utf-8");
+	const lines = content.trim().split("\n").filter(Boolean);
+
+	let turns = 0;
+	let toolCalls = 0;
+	let errors = 0;
+	let lastEvent = "";
+	let lastActivity = 0;
+	let startTime: number | null = null;
+	let endTime: number | null = null;
+	let status: AgentStatus["status"] = "pending";
+
+	for (const line of lines) {
+		try {
+			const entry = JSON.parse(line);
+			const ts = entry.ts || 0;
+
+			if (ts > lastActivity) {
+				lastActivity = ts;
+				lastEvent = entry.event || "";
+			}
+
+			switch (entry.event) {
+				case "session_start":
+					if (!startTime) startTime = ts;
+					status = "running";
+					break;
+				case "turn_end":
+					turns++;
+					break;
+				case "tool_call":
+					toolCalls++;
+					break;
+				case "tool_result":
+					if (entry.error) errors++;
+					break;
+				case "commit_error":
+					errors++;
+					break;
+				case "agent_end":
+				case "session_shutdown":
+					endTime = ts;
+					status = errors > 0 ? "error" : "done";
+					break;
+			}
+		} catch {
+			// Skip malformed lines
+		}
+	}
+
+	// If we have activity but no end event, still running
+	if (lastActivity > 0 && !endTime) {
+		status = "running";
+	}
+
+	return {
+		status,
+		turns,
+		toolCalls,
+		errors,
+		lastEvent,
+		lastActivity,
+		startTime,
+		endTime,
+	};
+}
+
+function discoverAgents(workspaceRoot: string): AgentStatus[] {
+	const agentsDir = join(workspaceRoot, "agents");
+	if (!existsSync(agentsDir)) return [];
+
+	const agents: AgentStatus[] = [];
+	const entries = readdirSync(agentsDir);
+
+	for (const name of entries) {
+		const agentDir = join(agentsDir, name);
+		if (!statSync(agentDir).isDirectory()) continue;
+
+		const auditPath = join(agentDir, "audit.jsonl");
+		const parsed = parseAuditLog(auditPath);
+
+		const startTime = parsed.startTime || null;
+		const endTime = parsed.endTime || null;
+		const duration = startTime
+			? (endTime || Date.now()) - startTime
+			: 0;
+
+		agents.push({
+			name,
+			status: parsed.status || "pending",
+			turns: parsed.turns || 0,
+			toolCalls: parsed.toolCalls || 0,
+			errors: parsed.errors || 0,
+			lastEvent: parsed.lastEvent || "",
+			lastActivity: parsed.lastActivity || 0,
+			startTime,
+			endTime,
+			duration,
+		});
+	}
+
+	return agents;
+}
+
+// =============================================================================
+// Dashboard Component
+// =============================================================================
+
+class MissionControlComponent {
+	private state: DashboardState;
+	private workspaceRoot: string;
+	private interval: ReturnType<typeof setInterval> | null = null;
+	private tui: { requestRender: () => void };
+	private theme: Theme;
+	private onClose: () => void;
+	private cachedLines: string[] = [];
+	private cachedWidth = 0;
+	private version = 0;
+	private cachedVersion = -1;
+
+	constructor(
+		workspaceRoot: string,
+		tui: { requestRender: () => void },
+		theme: Theme,
+		onClose: () => void
+	) {
+		this.workspaceRoot = workspaceRoot;
+		this.tui = tui;
+		this.theme = theme;
+		this.onClose = onClose;
+
+		this.state = {
+			agents: [],
+			selectedIndex: 0,
+			scrollOffset: 0,
+			sortBy: "status",
+			showDetails: false,
+			lastRefresh: Date.now(),
+		};
+
+		this.refresh();
+		this.startAutoRefresh();
+	}
+
+	private startAutoRefresh(): void {
+		this.interval = setInterval(() => {
+			this.refresh();
+			this.version++;
+			this.tui.requestRender();
+		}, 2000); // Refresh every 2 seconds
+	}
+
+	private stopAutoRefresh(): void {
+		if (this.interval) {
+			clearInterval(this.interval);
+			this.interval = null;
+		}
+	}
+
+	private refresh(): void {
+		const agents = discoverAgents(this.workspaceRoot);
+		this.sortAgents(agents);
+		this.state.agents = agents;
+		this.state.lastRefresh = Date.now();
+
+		// Clamp selection
+		if (this.state.selectedIndex >= agents.length) {
+			this.state.selectedIndex = Math.max(0, agents.length - 1);
+		}
+	}
+
+	private sortAgents(agents: AgentStatus[]): void {
+		const statusOrder = { running: 0, error: 1, pending: 2, done: 3 };
+
+		switch (this.state.sortBy) {
+			case "status":
+				agents.sort((a, b) => {
+					const statusDiff = statusOrder[a.status] - statusOrder[b.status];
+					if (statusDiff !== 0) return statusDiff;
+					return b.lastActivity - a.lastActivity;
+				});
+				break;
+			case "activity":
+				agents.sort((a, b) => b.lastActivity - a.lastActivity);
+				break;
+			case "name":
+				agents.sort((a, b) => a.name.localeCompare(b.name));
+				break;
+		}
+	}
+
+	handleInput(data: string): void {
+		const agents = this.state.agents;
+
+		if (matchesKey(data, "escape") || data === "q" || data === "Q") {
+			this.dispose();
+			this.onClose();
+			return;
+		}
+
+		if (matchesKey(data, "up") || data === "k" || data === "K") {
+			if (this.state.selectedIndex > 0) {
+				this.state.selectedIndex--;
+				this.adjustScroll();
+			}
+		} else if (matchesKey(data, "down") || data === "j" || data === "J") {
+			if (this.state.selectedIndex < agents.length - 1) {
+				this.state.selectedIndex++;
+				this.adjustScroll();
+			}
+		} else if (data === "r" || data === "R") {
+			this.refresh();
+		} else if (data === "s" || data === "S") {
+			// Cycle sort
+			const sorts: Array<"status" | "activity" | "name"> = ["status", "activity", "name"];
+			const idx = sorts.indexOf(this.state.sortBy);
+			this.state.sortBy = sorts[(idx + 1) % sorts.length];
+			this.sortAgents(this.state.agents);
+		} else if (matchesKey(data, "return") || data === " ") {
+			this.state.showDetails = !this.state.showDetails;
+		}
+
+		this.version++;
+		this.tui.requestRender();
+	}
+
+	private adjustScroll(): void {
+		const visibleRows = 15; // Approximate visible rows
+		if (this.state.selectedIndex < this.state.scrollOffset) {
+			this.state.scrollOffset = this.state.selectedIndex;
+		} else if (this.state.selectedIndex >= this.state.scrollOffset + visibleRows) {
+			this.state.scrollOffset = this.state.selectedIndex - visibleRows + 1;
+		}
+	}
+
+	render(width: number): string[] {
+		if (this.cachedVersion === this.version && this.cachedWidth === width) {
+			return this.cachedLines;
+		}
+
+		const lines: string[] = [];
+		const theme = this.theme;
+		const agents = this.state.agents;
+
+		// Header
+		lines.push(this.pad(theme.bold("╔══════════════════════════════════════════════════════════════╗"), width));
+		lines.push(this.pad(theme.bold("║") + "              🚀 " + theme.fg("accent", "MISSION CONTROL") + "              " + theme.bold("║"), width));
+		lines.push(this.pad(theme.bold("╚══════════════════════════════════════════════════════════════╝"), width));
+		lines.push("");
+
+		// Stats summary
+		const running = agents.filter((a) => a.status === "running").length;
+		const done = agents.filter((a) => a.status === "done").length;
+		const errors = agents.filter((a) => a.status === "error").length;
+		const pending = agents.filter((a) => a.status === "pending").length;
+
+		const statsLine = [
+			theme.fg("success", `● ${running} running`),
+			theme.fg("dim", `○ ${pending} pending`),
+			theme.fg("accent", `✓ ${done} done`),
+			theme.fg("error", `✗ ${errors} errors`),
+		].join("  │  ");
+
+		lines.push(this.pad(`  ${statsLine}`, width));
+		lines.push(this.pad(theme.fg("dim", `  Sort: ${this.state.sortBy} │ Last refresh: ${this.formatTime(this.state.lastRefresh)}`), width));
+		lines.push("");
+
+		// Column headers
+		const headerLine = theme.fg("muted", "  ST  AGENT                TURN  TOOLS  ERR   LAST ACTIVITY");
+		lines.push(this.pad(headerLine, width));
+		lines.push(this.pad(theme.fg("dim", "  " + "─".repeat(60)), width));
+
+		// Agent list
+		if (agents.length === 0) {
+			lines.push(this.pad(theme.fg("warning", "  No agents found in workspace"), width));
+		} else {
+			const visibleRows = 12;
+			const start = this.state.scrollOffset;
+			const end = Math.min(start + visibleRows, agents.length);
+
+			for (let i = start; i < end; i++) {
+				const agent = agents[i];
+				const selected = i === this.state.selectedIndex;
+				const line = this.renderAgentLine(agent, selected, width);
+				lines.push(line);
+			}
+
+			// Scroll indicator
+			if (agents.length > visibleRows) {
+				const scrollPct = Math.round((this.state.scrollOffset / (agents.length - visibleRows)) * 100);
+				lines.push(this.pad(theme.fg("dim", `  ↕ ${this.state.scrollOffset + 1}-${end} of ${agents.length} (${scrollPct}%)`), width));
+			}
+		}
+
+		lines.push("");
+
+		// Details panel (if showing)
+		if (this.state.showDetails && agents.length > 0) {
+			const agent = agents[this.state.selectedIndex];
+			lines.push(this.pad(theme.fg("accent", "  ┌─ Details: " + agent.name + " ─┐"), width));
+			lines.push(this.pad(`    Status:     ${this.statusIcon(agent.status)} ${agent.status}`, width));
+			lines.push(this.pad(`    Turns:      ${agent.turns}`, width));
+			lines.push(this.pad(`    Tool calls: ${agent.toolCalls}`, width));
+			lines.push(this.pad(`    Errors:     ${agent.errors}`, width));
+			lines.push(this.pad(`    Duration:   ${this.formatDuration(agent.duration)}`, width));
+			lines.push(this.pad(`    Last event: ${agent.lastEvent || "none"}`, width));
+			lines.push(this.pad(theme.fg("accent", "  └" + "─".repeat(30) + "┘"), width));
+			lines.push("");
+		}
+
+		// Help
+		lines.push(this.pad(theme.fg("dim", "  ↑↓/jk navigate │ enter details │ s sort │ r refresh │ q/esc quit"), width));
+
+		this.cachedLines = lines;
+		this.cachedWidth = width;
+		this.cachedVersion = this.version;
+
+		return lines;
+	}
+
+	private renderAgentLine(agent: AgentStatus, selected: boolean, width: number): string {
+		const theme = this.theme;
+		const icon = this.statusIcon(agent.status);
+
+		const name = truncateToWidth(agent.name, 18).padEnd(18);
+		const turns = String(agent.turns).padStart(4);
+		const tools = String(agent.toolCalls).padStart(5);
+		const errors = String(agent.errors).padStart(4);
+		const activity = this.formatRelativeTime(agent.lastActivity);
+
+		let line = `  ${icon}  ${name}  ${turns}  ${tools}  ${errors}   ${activity}`;
+
+		if (selected) {
+			line = theme.bg("selectedBg", theme.fg("accent", "▶" + line.slice(1)));
+		}
+
+		return this.pad(line, width);
+	}
+
+	private statusIcon(status: AgentStatus["status"]): string {
+		const theme = this.theme;
+		switch (status) {
+			case "running":
+				return theme.fg("success", "●");
+			case "done":
+				return theme.fg("accent", "✓");
+			case "error":
+				return theme.fg("error", "✗");
+			case "pending":
+				return theme.fg("dim", "○");
+		}
+	}
+
+	private formatTime(ts: number): string {
+		return new Date(ts).toLocaleTimeString();
+	}
+
+	private formatDuration(ms: number): string {
+		if (ms < 1000) return `${ms}ms`;
+		const seconds = Math.floor(ms / 1000);
+		if (seconds < 60) return `${seconds}s`;
+		const minutes = Math.floor(seconds / 60);
+		const secs = seconds % 60;
+		if (minutes < 60) return `${minutes}m ${secs}s`;
+		const hours = Math.floor(minutes / 60);
+		const mins = minutes % 60;
+		return `${hours}h ${mins}m`;
+	}
+
+	private formatRelativeTime(ts: number): string {
+		if (!ts) return "never";
+		const diff = Date.now() - ts;
+		if (diff < 5000) return "just now";
+		if (diff < 60000) return `${Math.floor(diff / 1000)}s ago`;
+		if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+		return `${Math.floor(diff / 3600000)}h ago`;
+	}
+
+	private pad(line: string, width: number): string {
+		const truncated = truncateToWidth(line, width);
+		const padding = Math.max(0, width - visibleWidth(truncated));
+		return truncated + " ".repeat(padding);
+	}
+
+	invalidate(): void {
+		this.cachedWidth = 0;
+		this.cachedVersion = -1;
+	}
+
+	dispose(): void {
+		this.stopAutoRefresh();
+	}
+}
+
+// =============================================================================
+// Extension Registration
+// =============================================================================
+
+export function registerMissionControl(pi: ExtensionAPI): void {
+	const openDashboard = async (_args: string, ctx: ExtensionContext) => {
+		const workspaceRoot = process.env.PI_WORKSPACE_ROOT;
+
+		if (!workspaceRoot) {
+			if (ctx.hasUI) {
+				ctx.ui.notify("PI_WORKSPACE_ROOT not set", "error");
+			}
+			return;
+		}
+
+		if (!ctx.hasUI) {
+			// Non-interactive: just print status
+			const agents = discoverAgents(workspaceRoot);
+			const running = agents.filter((a) => a.status === "running").length;
+			const done = agents.filter((a) => a.status === "done").length;
+			const errors = agents.filter((a) => a.status === "error").length;
+			console.log(`Agents: ${agents.length} total, ${running} running, ${done} done, ${errors} errors`);
+			return;
+		}
+
+		await ctx.ui.custom((tui, theme, _kb, done) => {
+			const component = new MissionControlComponent(
+				workspaceRoot,
+				tui,
+				theme,
+				() => done(undefined)
+			);
+			return component;
+		});
+	};
+
+	pi.registerCommand("mission-control", {
+		description: "Open Mission Control dashboard for monitoring agents",
+		handler: openDashboard,
+	});
+
+	pi.registerCommand("mc", {
+		description: "Alias for /mission-control",
+		handler: openDashboard,
+	});
+}

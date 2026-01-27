@@ -5,10 +5,11 @@
  * - Commits agent state after each tool call, turn, and agent end
  * - Captures patches when agents modify target repos
  * - Enables branching, rewinding, and forking agent execution paths
+ * - Mission Control dashboard for monitoring multiple agents
  *
  * Environment Variables:
  *   PI_WORKSPACE_ROOT      - Root of the shadow git workspace (required)
- *   PI_AGENT_NAME          - Name of this agent (required)
+ *   PI_AGENT_NAME          - Name of this agent (required for logging, optional for dashboard)
  *   PI_TARGET_REPOS        - Comma-separated target repo paths (optional)
  *   PI_TARGET_BRANCH       - Branch/worktree name agent is using in target (optional)
  *   PI_SHADOW_GIT_DISABLED - Set to "1" or "true" to disable (killswitch)
@@ -18,6 +19,8 @@
  *   /shadow-git enable    - Enable logging
  *   /shadow-git disable   - Disable logging (killswitch)
  *   /shadow-git history   - Show recent commits
+ *   /mission-control      - Open Mission Control dashboard
+ *   /mc                   - Alias for mission-control
  *
  * Failure Mode: FAIL-OPEN
  *   Git commit failures are logged but do NOT block the agent.
@@ -33,6 +36,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, isAbsolute } from "node:path";
+import { registerMissionControl } from "./mission-control.js";
 
 // =============================================================================
 // Types
@@ -76,7 +80,10 @@ export default function (pi: ExtensionAPI) {
 	const workspaceRoot = process.env.PI_WORKSPACE_ROOT;
 	const agentName = process.env.PI_AGENT_NAME;
 
-	// Not configured — register commands but no-op on events
+	// Always register Mission Control (only needs PI_WORKSPACE_ROOT)
+	registerMissionControl(pi);
+
+	// Shadow-git logging needs both PI_WORKSPACE_ROOT and PI_AGENT_NAME
 	if (!workspaceRoot || !agentName) {
 		registerCommands(pi, null, null, { enabled: false, reason: "Not configured (missing PI_WORKSPACE_ROOT or PI_AGENT_NAME)" });
 		return;
