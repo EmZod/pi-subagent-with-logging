@@ -310,3 +310,90 @@ Outcome: PASS
 - Root .git is never modified
 - audit.jsonl is gitignored
 
+
+---
+
+## TDD-02-1: No commits during tool execution
+
+### RED
+**Test:** `tests/tdd/tdd-02-1-no-per-tool-commits.sh`
+**Expected:** FAIL
+**Actual:** FAIL ✓ (7 commits for 2 tool calls)
+**What we're testing:** Commits should NOT happen after each tool call
+
+**Observations:**
+- Current code has `gitCommit` in `tool_result` handler
+- We have 7 commits: init + 2 tools × 3 (start, tool, turn) = lots of noise
+- Need to remove the per-tool commit
+
+### GREEN
+**Objective:** Remove per-tool commits, keep only turn-level commits
+
+**Implementation Plan:**
+1. Remove the `gitCommit` call from `tool_result` handler
+2. Keep the `gitCommit` in `turn_end` handler (this already exists)
+3. Verify commits = roughly (turns + 1) not (tools + turns + 1)
+
+**Implementing now...**
+
+
+**DECISION (Deviation from Initial Test Design):**
+
+The original test assertion `commits <= tool_calls` was too strict and didn't capture the actual goal.
+
+**What we want to verify:**
+- NOT doing per-tool commits (1 commit per tool call)
+- DOING turn-level commits (1 commit per turn)
+
+**Expected commit structure:**
+1. `agent initialized` - git init (repo setup)
+2. `[agent:start] session began` - session start (agent activated)
+3. `[agent:turn-N]` - one per turn (meaningful checkpoints)
+
+**NOT expected:**
+- `[agent:tool]` commits (removed in this refactor)
+- `[agent:end]` commits (fires before final turn, causes confusion)
+
+**Updated test assertion:**
+- Count commits with `:tool]` in message = should be ZERO
+- This verifies we removed per-tool commits
+- Session start commit is preserved (user requirement)
+
+**Rationale:**
+- Session start commit is valuable for marking "agent became active"
+- Turn-level commits are the meaningful work checkpoints
+- agent_end fires BEFORE final turn_end, causing confusing git history
+- All events still logged to audit.jsonl for full granularity
+
+
+**Test Results:**
+
+| Test | Result |
+|------|--------|
+| TDD-02-1 (no per-tool commits) | PASS ✓ |
+| TDD-02-2 (commit has 'turn') | PASS ✓ |
+| Regression (11 tests) | PASS ✓ |
+
+### REFACTOR
+**Changes:** Updated test assertion to check for zero `:tool]` commits instead of `commits <= tool_calls`
+**All tests:** PASS ✓
+
+---
+
+## TDD-02-1 and TDD-02-2: COMPLETE ✓
+
+**STEP-02 Achievement:** Turn-level commits implemented
+- Removed per-tool commits from `tool_result` handler
+- Kept turn-level commits in `turn_end` handler
+- Session start commit preserved (user requirement)
+- agent_end commit removed (fires before final turn, causes confusion)
+- Commit message format: `[agent:turn-N] {tool_count} tools`
+
+**Commit Structure Now:**
+```
+agent initialized          <- git init
+[agent:start] session began <- session start
+[agent:turn-0] no tools    <- turn 0 (often no tools)
+[agent:turn-1] 2 tools     <- turn 1 with work
+```
+

@@ -356,14 +356,15 @@ export default function (pi: ExtensionAPI) {
 		await initAgentRepo();
 
 		emit("session_start", {});
-		await gitCommit(`[${config.agentName}:start] initialized`);
+		await gitCommit(`[${config.agentName}:start] session began`);
 	});
 
 	pi.on("session_shutdown", async () => {
 		if (!enabled) return;
 
 		emit("session_shutdown", { stats });
-		await gitCommit(`[${config.agentName}:end] shutdown (${stats.commits} commits, ${stats.commitErrors} errors)`);
+		// NOTE: No commit here - turn_end commits capture state
+		// Stats are preserved in audit.jsonl
 	});
 
 	// -------------------------------------------------------------------------
@@ -374,7 +375,8 @@ export default function (pi: ExtensionAPI) {
 		if (!enabled) return;
 
 		emit("agent_end", { messageCount: event.messages.length, stats });
-		await gitCommit(`[${config.agentName}:end] completed (${event.messages.length} messages)`);
+		// NOTE: No commit here - agent_end fires BEFORE final turn_end
+		// which causes confusing commit order. Turn commits are sufficient.
 	});
 
 	// -------------------------------------------------------------------------
@@ -394,11 +396,17 @@ export default function (pi: ExtensionAPI) {
 	pi.on("turn_end", async (event, ctx) => {
 		if (!enabled) return;
 
+		const toolCount = event.toolResults.length;
+
 		emit("turn_end", {
 			turn: event.turnIndex,
-			toolResultCount: event.toolResults.length,
+			toolResultCount: toolCount,
 		});
-		await gitCommit(`[${config.agentName}:turn] turn ${event.turnIndex} complete`);
+
+		// Turn-level commits (Goedecke: "Complexity is debt" - 10x fewer commits)
+		// Summary includes tool count for meaningful checkpoints
+		const summary = toolCount > 0 ? `${toolCount} tools` : "no tools";
+		await gitCommit(`[${config.agentName}:turn-${event.turnIndex}] ${summary}`);
 		updateStatus(ctx);
 	});
 
@@ -438,19 +446,9 @@ export default function (pi: ExtensionAPI) {
 			}
 		}
 
-		// Commit after each tool call
-		let brief = "";
-		if (event.toolName === "write" || event.toolName === "edit" || event.toolName === "read") {
-			brief = event.input.path as string;
-		} else if (event.toolName === "bash") {
-			const cmd = event.input.command as string;
-			brief = cmd.length > 40 ? cmd.slice(0, 40) + "..." : cmd;
-		} else {
-			brief = event.toolCallId;
-		}
-
-		const status = event.isError ? " (error)" : "";
-		await gitCommit(`[${config.agentName}:tool] ${event.toolName}: ${brief}${status}`);
+		// NOTE: Per-tool commits REMOVED (Goedecke: "Complexity is debt")
+		// Commits now happen at turn_end only - see turn_end handler
+		// Tool-level granularity is preserved in audit.jsonl
 		updateStatus(ctx);
 	});
 }
