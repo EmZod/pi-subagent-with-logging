@@ -1,22 +1,26 @@
 # pi-hook-logging
 
-Git-based orchestration logging for [pi](https://github.com/badlogic/pi) subagents.
+Git-based orchestration logging for pi subagents.
 
 Enables branching, rewinding, and forking agent execution paths through automatic git commits and structured audit logging.
 
 ## The Problem
 
 When orchestrating multiple pi agents, you need:
+
 - **Auditability**: What did each agent do, when?
 - **Recoverability**: Branch from any point, rewind mistakes
 - **Observability**: Real-time progress tracking
 
 ## The Solution
 
-A pi hook that:
-1. Commits workspace state after every tool call, turn, and agent completion
-2. Writes structured JSONL audit logs
-3. Captures patches when agents modify external repos
+A pi extension that:
+
+- Commits workspace state after every tool call, turn, and agent completion
+- Writes structured JSONL audit logs
+- Captures patches when agents modify external repos
+- **Provides a runtime killswitch** for disabling during incidents
+- **Fails open** — git errors are logged but don't block the agent
 
 ## Installation
 
@@ -24,42 +28,15 @@ A pi hook that:
 # Clone
 git clone https://github.com/EmZod/pi-hook-logging.git
 
-# Copy hook to pi's global hooks directory
-cp pi-hook-logging/src/shadow-git.ts ~/.pi/agent/hooks/
+# Copy extension to pi's global extensions directory
+cp pi-hook-logging/src/shadow-git.ts ~/.pi/agent/extensions/
 ```
 
-Or use directly with `--hook`:
+Or use directly with `--extension` / `-e`:
 
 ```bash
-pi --hook /path/to/pi-hook-logging/src/shadow-git.ts ...
+pi -e /path/to/pi-hook-logging/src/shadow-git.ts ...
 ```
-
-## ⚠️ CRITICAL: Model Settings Override
-
-**The `--model` CLI flag is IGNORED by pi.** It uses `~/.pi/agent/settings.json` instead.
-
-Before spawning ANY subagents, force the correct model:
-
-```bash
-cat > ~/.pi/agent/settings.json << 'EOF'
-{
-  "defaultProvider": "anthropic",
-  "defaultModel": "claude-haiku-4-5",
-  "defaultThinkingLevel": "none"
-}
-EOF
-```
-
-**If you skip this, you WILL spawn Opus agents at 15x the cost of Haiku.**
-
-Verify after spawning:
-```bash
-tail -20 agents/*/output/run.log | grep -o "claude-[a-z0-9-]*" | sort -u
-# Should show: claude-haiku-4-5
-# NOT: claude-opus-4-5-thinking
-```
-
----
 
 ## Usage
 
@@ -74,7 +51,7 @@ mkdir -p orchestrator agents/scout1/{workspace,output}
 git add -A && git commit -m "Initial workspace"
 ```
 
-### 2. Spawn Agent with Hook
+### 2. Spawn Agent with Extension
 
 **Option A: Use the spawn script (recommended)**
 
@@ -93,11 +70,11 @@ PI_AGENT_NAME="scout1" \
     --model claude-haiku-4-5 \
     --tools read,write,bash \
     --no-input \
-    --hook ~/.pi/agent/hooks/shadow-git.ts \
+    -e ~/.pi/agent/extensions/shadow-git.ts \
     "Read agents/scout1/plan.md and execute."
 ```
 
-> **Note**: When spawning via tmux, shell quoting can cause issues. Set env vars before the tmux command, or use the spawn script to avoid problems.
+> **Note**: When spawning via tmux, shell quoting can cause issues. Set env vars before the tmux command, or use the spawn script.
 
 ### 3. View History
 
@@ -118,8 +95,37 @@ git checkout -b alternative 6622667
 
 # Spawn new agent from that state
 PI_WORKSPACE_ROOT="$(pwd)" PI_AGENT_NAME="scout1-v2" \
-  pi --hook ~/.pi/agent/hooks/shadow-git.ts ...
+  pi -e ~/.pi/agent/extensions/shadow-git.ts ...
 ```
+
+## Commands
+
+The extension provides a `/shadow-git` command for runtime control:
+
+| Command | Description |
+|---------|-------------|
+| `/shadow-git` | Show status (default) |
+| `/shadow-git status` | Show detailed status |
+| `/shadow-git enable` | Enable logging |
+| `/shadow-git disable` | Disable logging (runtime killswitch) |
+| `/shadow-git history` | Show last 20 commits |
+| `/shadow-git stats` | Show commit/error statistics |
+
+## Killswitch
+
+During an incident, disable logging instantly:
+
+**Runtime (no restart needed):**
+```
+/shadow-git disable
+```
+
+**Environment variable:**
+```bash
+PI_SHADOW_GIT_DISABLED=1 pi -e shadow-git.ts ...
+```
+
+The extension **fails open**: if git commits fail, errors are logged but the agent continues. This prevents git issues from blocking agent execution.
 
 ## Environment Variables
 
@@ -129,6 +135,15 @@ PI_WORKSPACE_ROOT="$(pwd)" PI_AGENT_NAME="scout1-v2" \
 | `PI_AGENT_NAME` | Yes | Agent name for commits and paths |
 | `PI_TARGET_REPOS` | No | Comma-separated target repo paths |
 | `PI_TARGET_BRANCH` | No | Branch name for commit linkage |
+| `PI_SHADOW_GIT_DISABLED` | No | Set to `1` or `true` to disable (killswitch) |
+
+## Status Bar
+
+When running, the extension shows status in the footer:
+
+- `📝 scout1 T3` — Agent "scout1", turn 3, logging active
+- `📝 scout1 T3 ⚠️2` — 2 commit errors occurred
+- `🔇 shadow-git: disabled` — Killswitch active
 
 ## Commit Messages
 
@@ -138,6 +153,7 @@ PI_WORKSPACE_ROOT="$(pwd)" PI_AGENT_NAME="scout1-v2" \
 | Tool call | `[agent:tool] {tool}: {path or brief}` |
 | Turn end | `[agent:turn] turn {N} complete` |
 | Agent end | `[agent:end] completed ({N} messages)` |
+| Shutdown | `[agent:end] shutdown ({N} commits, {M} errors)` |
 
 ## Audit Log
 
@@ -155,8 +171,11 @@ Query with jq:
 # Tool calls only
 jq 'select(.event == "tool_call")' agents/scout1/audit.jsonl
 
-# Errors
-jq 'select(.error == true)' agents/scout1/audit.jsonl
+# Errors (tool errors + commit errors)
+jq 'select(.error == true or .event == "commit_error")' agents/scout1/audit.jsonl
+
+# Commit failures specifically
+jq 'select(.event == "commit_error")' agents/scout1/audit.jsonl
 ```
 
 ## Target Repo Patches
@@ -171,6 +190,19 @@ target-patches/
 ```
 
 Replay: `git apply target-patches/repo-name/turn-001-write-1.patch`
+
+## Failure Handling
+
+The extension is designed to **fail open**:
+
+| Failure | Behavior |
+|---------|----------|
+| Git commit fails | Error logged to audit.jsonl, agent continues |
+| Audit file write fails | Error to stderr, agent continues |
+| Patch capture fails | Error logged, agent continues |
+| Directory creation fails | Error to stderr, extension continues |
+
+Stats track errors: use `/shadow-git stats` to see `commitErrors` count.
 
 ## For AI Agents
 

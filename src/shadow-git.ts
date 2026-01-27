@@ -7,27 +7,36 @@
  * - Enables branching, rewinding, and forking agent execution paths
  *
  * Environment Variables:
- *   PI_WORKSPACE_ROOT - Root of the shadow git workspace (required)
- *   PI_AGENT_NAME     - Name of this agent (required)
- *   PI_TARGET_REPOS   - Comma-separated target repo paths (optional)
- *   PI_TARGET_BRANCH  - Branch/worktree name agent is using in target (optional, for linkage)
+ *   PI_WORKSPACE_ROOT      - Root of the shadow git workspace (required)
+ *   PI_AGENT_NAME          - Name of this agent (required)
+ *   PI_TARGET_REPOS        - Comma-separated target repo paths (optional)
+ *   PI_TARGET_BRANCH       - Branch/worktree name agent is using in target (optional)
+ *   PI_SHADOW_GIT_DISABLED - Set to "1" or "true" to disable (killswitch)
+ *
+ * Commands:
+ *   /shadow-git           - Show status
+ *   /shadow-git enable    - Enable logging
+ *   /shadow-git disable   - Disable logging (killswitch)
+ *   /shadow-git history   - Show recent commits
+ *
+ * Failure Mode: FAIL-OPEN
+ *   Git commit failures are logged but do NOT block the agent.
+ *   This ensures agent execution continues even if git operations fail.
  *
  * Commit Message Format:
- *   [agent:tool]  {toolName}: {brief}     - After each tool call
- *   [agent:turn]  turn {N} complete       - After each turn
- *   [agent:end]   {status}                - When agent completes
- *   [agent:start] initialized             - When agent starts
- *
- * MIGRATION (v0.35):
- *   - HookAPI → ExtensionAPI
- *   - --hook → --extension / -e
- *   - hooks/ → extensions/
- *   - {"hooks": [...]} → {"extensions": [...]}
+ *   [agent:start] initialized              - When agent starts
+ *   [agent:tool]  {toolName}: {brief}      - After each tool call
+ *   [agent:turn]  turn {N} complete        - After each turn
+ *   [agent:end]   {status}                 - When agent completes
  */
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, isAbsolute } from "node:path";
+import { dirname, join, isAbsolute } from "node:path";
+
+// =============================================================================
+// Types
+// =============================================================================
 
 interface Config {
 	workspaceRoot: string;
@@ -39,15 +48,42 @@ interface Config {
 	patchDir: string;
 }
 
+interface AuditEntry {
+	ts: number;
+	event: string;
+	agent: string;
+	turn: number;
+	[key: string]: unknown;
+}
+
+interface Stats {
+	commits: number;
+	commitErrors: number;
+	toolCalls: number;
+	turns: number;
+	patchesCaptured: number;
+}
+
+// =============================================================================
+// Extension
+// =============================================================================
+
 export default function (pi: ExtensionAPI) {
-	// Parse environment
+	// -------------------------------------------------------------------------
+	// Configuration
+	// -------------------------------------------------------------------------
+
 	const workspaceRoot = process.env.PI_WORKSPACE_ROOT;
 	const agentName = process.env.PI_AGENT_NAME;
 
+	// Not configured — register commands but no-op on events
 	if (!workspaceRoot || !agentName) {
-		// Not configured — silent no-op
+		registerCommands(pi, null, null, { enabled: false, reason: "Not configured (missing PI_WORKSPACE_ROOT or PI_AGENT_NAME)" });
 		return;
 	}
+
+	// Check initial killswitch state
+	let enabled = !isKillswitchActive();
 
 	const targetRepos = process.env.PI_TARGET_REPOS
 		? process.env.PI_TARGET_REPOS.split(",").map((p) => p.trim())
@@ -63,55 +99,100 @@ export default function (pi: ExtensionAPI) {
 		patchDir: join(workspaceRoot, "target-patches"),
 	};
 
-	// Ensure directories exist
-	mkdirSync(dirname(config.auditFile), { recursive: true });
-	mkdirSync(config.patchDir, { recursive: true });
+	// Ensure directories exist (fail-open: log error but continue)
+	try {
+		mkdirSync(dirname(config.auditFile), { recursive: true });
+		mkdirSync(config.patchDir, { recursive: true });
+	} catch (err) {
+		console.error(`[shadow-git] Failed to create directories: ${err}`);
+	}
 
-	// Track turn number
+	// -------------------------------------------------------------------------
+	// State
+	// -------------------------------------------------------------------------
+
 	let currentTurn = 0;
 	let toolCallCount = 0;
+	const stats: Stats = {
+		commits: 0,
+		commitErrors: 0,
+		toolCalls: 0,
+		turns: 0,
+		patchesCaptured: 0,
+	};
 
-	// ==========================================================================
+	// -------------------------------------------------------------------------
 	// Utility Functions
-	// ==========================================================================
+	// -------------------------------------------------------------------------
 
-	const emit = (event: string, data: Record<string, unknown>) => {
-		const entry = {
+	function isKillswitchActive(): boolean {
+		const val = process.env.PI_SHADOW_GIT_DISABLED;
+		return val === "1" || val === "true";
+	}
+
+	function emit(event: string, data: Record<string, unknown>): void {
+		if (!enabled) return;
+
+		const entry: AuditEntry = {
 			ts: Date.now(),
 			event,
 			agent: config.agentName,
 			turn: currentTurn,
 			...data,
 		};
-		appendFileSync(config.auditFile, JSON.stringify(entry) + "\n");
-	};
 
-	const gitCommit = async (message: string) => {
-		// Stage all changes in agent directory
-		await pi.exec("git", ["-C", config.workspaceRoot, "add", config.agentDir]);
-
-		// Also stage patches if any
-		if (existsSync(config.patchDir)) {
-			await pi.exec("git", ["-C", config.workspaceRoot, "add", config.patchDir]);
+		try {
+			appendFileSync(config.auditFile, JSON.stringify(entry) + "\n");
+		} catch (err) {
+			console.error(`[shadow-git] Failed to write audit log: ${err}`);
 		}
+	}
 
-		// Commit (allow empty for timeline continuity)
-		const fullMessage = config.targetBranch
-			? `${message} [target: ${config.targetBranch}]`
-			: message;
+	async function gitCommit(message: string): Promise<boolean> {
+		if (!enabled) return true;
 
-		await pi.exec("git", [
-			"-C",
-			config.workspaceRoot,
-			"commit",
-			"-m",
-			fullMessage,
-			"--allow-empty",
-		]);
-	};
+		try {
+			// Stage all changes in agent directory
+			const addAgent = await pi.exec("git", ["-C", config.workspaceRoot, "add", config.agentDir]);
+			if (addAgent.code !== 0) {
+				throw new Error(`git add failed: ${addAgent.stderr}`);
+			}
 
-	const isTargetRepoPath = (filePath: string): string | null => {
-		// Check if path is in a target repo (not in workspace)
+			// Also stage patches if any
+			if (existsSync(config.patchDir)) {
+				await pi.exec("git", ["-C", config.workspaceRoot, "add", config.patchDir]);
+			}
+
+			// Commit (allow empty for timeline continuity)
+			const fullMessage = config.targetBranch
+				? `${message} [target: ${config.targetBranch}]`
+				: message;
+
+			const commit = await pi.exec("git", [
+				"-C",
+				config.workspaceRoot,
+				"commit",
+				"-m",
+				fullMessage,
+				"--allow-empty",
+			]);
+
+			if (commit.code !== 0) {
+				throw new Error(`git commit failed: ${commit.stderr}`);
+			}
+
+			stats.commits++;
+			return true;
+		} catch (err) {
+			// FAIL-OPEN: Log error but don't block agent
+			stats.commitErrors++;
+			emit("commit_error", { message, error: String(err) });
+			console.error(`[shadow-git] Commit failed (continuing): ${err}`);
+			return false;
+		}
+	}
+
+	function isTargetRepoPath(filePath: string): string | null {
 		const absPath = isAbsolute(filePath) ? filePath : join(process.cwd(), filePath);
 
 		// If it's inside workspace, it's not a target repo path
@@ -133,84 +214,143 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		return null;
-	};
+	}
 
-	const capturePatch = async (
+	async function capturePatch(
 		targetRepo: string,
 		filePath: string,
 		toolName: string
-	) => {
-		const repoName = targetRepo === "unknown" ? "target" : dirname(targetRepo).split("/").pop() || "repo";
-		const patchSubdir = join(config.patchDir, repoName);
-		mkdirSync(patchSubdir, { recursive: true });
+	): Promise<void> {
+		if (!enabled) return;
 
-		const patchFile = join(
-			patchSubdir,
-			`turn-${String(currentTurn).padStart(3, "0")}-${toolName}-${toolCallCount}.patch`
-		);
+		try {
+			const repoName = targetRepo === "unknown"
+				? "target"
+				: dirname(targetRepo).split("/").pop() || "repo";
+			const patchSubdir = join(config.patchDir, repoName);
+			mkdirSync(patchSubdir, { recursive: true });
 
-		// Try to get git diff for this file
-		const { stdout, code } = await pi.exec("git", [
-			"-C",
-			dirname(filePath),
-			"diff",
-			"HEAD",
-			"--",
-			filePath,
-		]);
+			const patchFile = join(
+				patchSubdir,
+				`turn-${String(currentTurn).padStart(3, "0")}-${toolName}-${toolCallCount}.patch`
+			);
 
-		if (code === 0 && stdout.trim()) {
-			writeFileSync(patchFile, stdout);
-			emit("patch_captured", { file: filePath, patch: patchFile });
+			const { stdout, code } = await pi.exec("git", [
+				"-C",
+				dirname(filePath),
+				"diff",
+				"HEAD",
+				"--",
+				filePath,
+			]);
+
+			if (code === 0 && stdout.trim()) {
+				writeFileSync(patchFile, stdout);
+				stats.patchesCaptured++;
+				emit("patch_captured", { file: filePath, patch: patchFile });
+			}
+		} catch (err) {
+			emit("patch_error", { file: filePath, error: String(err) });
+			console.error(`[shadow-git] Patch capture failed: ${err}`);
 		}
-	};
+	}
 
-	// ==========================================================================
+	function updateStatus(ctx: ExtensionContext): void {
+		if (!ctx.hasUI) return;
+
+		if (!enabled) {
+			ctx.ui.setStatus("shadow-git", "🔇 shadow-git: disabled");
+		} else {
+			const errorSuffix = stats.commitErrors > 0 ? ` ⚠️${stats.commitErrors}` : "";
+			ctx.ui.setStatus("shadow-git", `📝 ${config.agentName} T${currentTurn}${errorSuffix}`);
+		}
+	}
+
+	// -------------------------------------------------------------------------
+	// Register Commands
+	// -------------------------------------------------------------------------
+
+	registerCommands(pi, config, stats, {
+		enabled: true,
+		getEnabled: () => enabled,
+		setEnabled: (val: boolean, ctx: ExtensionContext) => {
+			enabled = val;
+			updateStatus(ctx);
+			emit(val ? "enabled" : "disabled", {});
+		},
+	});
+
+	// -------------------------------------------------------------------------
 	// Session Lifecycle Events
-	// ==========================================================================
+	// -------------------------------------------------------------------------
 
-	pi.on("session_start", async () => {
+	pi.on("session_start", async (_event, ctx) => {
+		// Re-check killswitch on session start (env may have changed)
+		if (isKillswitchActive()) {
+			enabled = false;
+		}
+
+		updateStatus(ctx);
+
+		if (!enabled) return;
+
 		emit("session_start", {});
 		await gitCommit(`[${config.agentName}:start] initialized`);
 	});
 
 	pi.on("session_shutdown", async () => {
-		emit("session_shutdown", {});
-		await gitCommit(`[${config.agentName}:end] shutdown`);
+		if (!enabled) return;
+
+		emit("session_shutdown", { stats });
+		await gitCommit(`[${config.agentName}:end] shutdown (${stats.commits} commits, ${stats.commitErrors} errors)`);
 	});
 
-	// ==========================================================================
+	// -------------------------------------------------------------------------
 	// Agent Events
-	// ==========================================================================
+	// -------------------------------------------------------------------------
 
 	pi.on("agent_end", async (event) => {
-		emit("agent_end", { messageCount: event.messages.length });
+		if (!enabled) return;
+
+		emit("agent_end", { messageCount: event.messages.length, stats });
 		await gitCommit(`[${config.agentName}:end] completed (${event.messages.length} messages)`);
 	});
 
-	// ==========================================================================
+	// -------------------------------------------------------------------------
 	// Turn Events
-	// ==========================================================================
+	// -------------------------------------------------------------------------
 
-	pi.on("turn_start", async (event) => {
+	pi.on("turn_start", async (event, ctx) => {
 		currentTurn = event.turnIndex;
+		stats.turns++;
+		updateStatus(ctx);
+
+		if (!enabled) return;
+
 		emit("turn_start", { turn: event.turnIndex });
 	});
 
-	pi.on("turn_end", async (event) => {
+	pi.on("turn_end", async (event, ctx) => {
+		if (!enabled) return;
+
 		emit("turn_end", {
 			turn: event.turnIndex,
 			toolResultCount: event.toolResults.length,
 		});
 		await gitCommit(`[${config.agentName}:turn] turn ${event.turnIndex} complete`);
+		updateStatus(ctx);
 	});
 
-	// ==========================================================================
+	// -------------------------------------------------------------------------
 	// Tool Events
-	// ==========================================================================
+	// -------------------------------------------------------------------------
 
 	pi.on("tool_call", async (event) => {
 		toolCallCount++;
+		stats.toolCalls++;
+
+		if (!enabled) return;
+
 		emit("tool_call", {
 			tool: event.toolName,
 			toolCallId: event.toolCallId,
@@ -218,7 +358,9 @@ export default function (pi: ExtensionAPI) {
 		});
 	});
 
-	pi.on("tool_result", async (event) => {
+	pi.on("tool_result", async (event, ctx) => {
+		if (!enabled) return;
+
 		emit("tool_result", {
 			tool: event.toolName,
 			toolCallId: event.toolCallId,
@@ -248,5 +390,117 @@ export default function (pi: ExtensionAPI) {
 
 		const status = event.isError ? " (error)" : "";
 		await gitCommit(`[${config.agentName}:tool] ${event.toolName}: ${brief}${status}`);
+		updateStatus(ctx);
+	});
+}
+
+// =============================================================================
+// Command Registration (separated for reuse in unconfigured mode)
+// =============================================================================
+
+interface CommandState {
+	enabled: boolean;
+	reason?: string;
+	getEnabled?: () => boolean;
+	setEnabled?: (val: boolean, ctx: ExtensionContext) => void;
+}
+
+function registerCommands(
+	pi: ExtensionAPI,
+	config: Config | null,
+	stats: Stats | null,
+	state: CommandState
+): void {
+	pi.registerCommand("shadow-git", {
+		description: "Shadow-git status and control (enable|disable|history|stats)",
+		handler: async (args, ctx) => {
+			const subcommand = args.trim().split(/\s+/)[0] || "status";
+
+			// Handle unconfigured state
+			if (!config || !stats) {
+				if (ctx.hasUI) {
+					ctx.ui.notify(`shadow-git: ${state.reason || "not configured"}`, "warning");
+				}
+				return;
+			}
+
+			switch (subcommand) {
+				case "status": {
+					const enabled = state.getEnabled?.() ?? state.enabled;
+					const lines = [
+						`Shadow-Git Status`,
+						`─────────────────`,
+						`Enabled:    ${enabled ? "✅ yes" : "❌ no (killswitch)"}`,
+						`Agent:      ${config.agentName}`,
+						`Workspace:  ${config.workspaceRoot}`,
+						`Turn:       ${stats.turns}`,
+						`Commits:    ${stats.commits}`,
+						`Errors:     ${stats.commitErrors}`,
+						`Patches:    ${stats.patchesCaptured}`,
+						`Audit:      ${config.auditFile}`,
+					];
+					if (ctx.hasUI) {
+						await ctx.ui.select("Shadow-Git Status", lines);
+					}
+					break;
+				}
+
+				case "enable": {
+					state.setEnabled?.(true, ctx);
+					if (ctx.hasUI) {
+						ctx.ui.notify("shadow-git enabled", "success");
+					}
+					break;
+				}
+
+				case "disable": {
+					state.setEnabled?.(false, ctx);
+					if (ctx.hasUI) {
+						ctx.ui.notify("shadow-git disabled (killswitch active)", "warning");
+					}
+					break;
+				}
+
+				case "history": {
+					const { stdout, code } = await pi.exec("git", [
+						"-C",
+						config.workspaceRoot,
+						"log",
+						"--oneline",
+						"-20",
+					]);
+
+					if (code === 0 && stdout.trim()) {
+						const lines = stdout.trim().split("\n");
+						if (ctx.hasUI) {
+							await ctx.ui.select("Recent Commits (last 20)", lines);
+						}
+					} else if (ctx.hasUI) {
+						ctx.ui.notify("No commits found or git error", "warning");
+					}
+					break;
+				}
+
+				case "stats": {
+					const lines = [
+						`Commits:         ${stats.commits}`,
+						`Commit errors:   ${stats.commitErrors}`,
+						`Tool calls:      ${stats.toolCalls}`,
+						`Turns:           ${stats.turns}`,
+						`Patches:         ${stats.patchesCaptured}`,
+					];
+					if (ctx.hasUI) {
+						await ctx.ui.select("Shadow-Git Stats", lines);
+					}
+					break;
+				}
+
+				default: {
+					if (ctx.hasUI) {
+						ctx.ui.notify(`Unknown subcommand: ${subcommand}. Use: status|enable|disable|history|stats`, "warning");
+					}
+				}
+			}
+		},
 	});
 }

@@ -463,9 +463,9 @@ pi --model claude-sonnet-4-20250514 --max-turns 20 --no-input --print-last \
 
 ---
 
-## Shadow Git Hook (Audit Trail)
+## Shadow Git Extension (Audit Trail)
 
-The shadow-git hook creates a git-based audit trail of all agent activity. Every tool call, turn, and agent completion is committed to the workspace's git repo.
+The shadow-git extension creates a git-based audit trail of all agent activity. Every tool call, turn, and agent completion is committed to the workspace's git repo.
 
 ### Why Use It?
 
@@ -476,22 +476,24 @@ The shadow-git hook creates a git-based audit trail of all agent activity. Every
 | **Rewinding** | `git checkout HEAD~5` to go back in time |
 | **Multi-agent tracking** | All agents commit to same repo |
 | **Structured queries** | `jq` on audit.jsonl for analytics |
+| **Killswitch** | `/shadow-git disable` or env var to stop |
+| **Fail-open** | Git errors logged but don't block agent |
 
 ### Installation
 
 ```bash
 # Option 1: Clone the repo
-git clone https://github.com/EmZod/pi-hook-logging.git ~/.pi-hooks
+git clone https://github.com/EmZod/pi-hook-logging.git ~/.pi-extensions
 
-# Option 2: Copy just the hook
-mkdir -p ~/.pi/agent/hooks
-curl -o ~/.pi/agent/hooks/shadow-git.ts \
+# Option 2: Copy to global extensions (auto-loaded)
+mkdir -p ~/.pi/agent/extensions
+curl -o ~/.pi/agent/extensions/shadow-git.ts \
   https://raw.githubusercontent.com/EmZod/pi-hook-logging/main/src/shadow-git.ts
 ```
 
 ### Usage
 
-**Environment variables (REQUIRED):**
+**Environment variables:**
 
 | Variable | Required | Description |
 |----------|----------|-------------|
@@ -499,6 +501,7 @@ curl -o ~/.pi/agent/hooks/shadow-git.ts \
 | `PI_AGENT_NAME` | Yes | Agent name (used in commits and paths) |
 | `PI_TARGET_REPOS` | No | Comma-separated paths to track external repos |
 | `PI_TARGET_BRANCH` | No | Branch name to include in commits |
+| `PI_SHADOW_GIT_DISABLED` | No | Set to `1` to disable (killswitch) |
 
 **Spawning with shadow-git:**
 
@@ -506,7 +509,7 @@ curl -o ~/.pi/agent/hooks/shadow-git.ts \
 # Using tmux (RECOMMENDED)
 WORKSPACE="/path/to/workspace"
 AGENT="scout1"
-HOOK="$HOME/.pi/agent/hooks/shadow-git.ts"
+EXT="$HOME/.pi/agent/extensions/shadow-git.ts"
 
 tmux new-session -d -s "$AGENT" \
   "cd $WORKSPACE/agents/$AGENT && \
@@ -515,7 +518,7 @@ tmux new-session -d -s "$AGENT" \
    pi --model claude-haiku-4-5 \
       --max-turns 30 \
       --no-input \
-      --hook '$HOOK' \
+      -e '$EXT' \
       'Read plan.md and execute.' \
       2>&1 | tee output/run.log"
 ```
@@ -523,7 +526,7 @@ tmux new-session -d -s "$AGENT" \
 **Using the spawn script (easiest):**
 
 ```bash
-# Clone the hook repo
+# Clone the extension repo
 git clone https://github.com/EmZod/pi-hook-logging.git
 
 # Use the spawn script
@@ -532,6 +535,22 @@ git clone https://github.com/EmZod/pi-hook-logging.git
   "scout1" \
   "Read plan.md and execute."
 ```
+
+### Killswitch (Emergency Disable)
+
+If logging is causing problems during an incident:
+
+**Runtime (no restart):**
+```
+/shadow-git disable
+```
+
+**Environment (for new agents):**
+```bash
+PI_SHADOW_GIT_DISABLED=1 pi -e shadow-git.ts ...
+```
+
+The extension **fails open**: git errors are logged but don't block the agent.
 
 ### What Gets Logged
 
@@ -584,7 +603,7 @@ tmux kill-session -t scout1
 
 # Spawn new agent from branched state
 PI_WORKSPACE_ROOT="$(pwd)" PI_AGENT_NAME="scout1-v2" \
-  pi --hook ~/.pi/agent/hooks/shadow-git.ts ...
+  pi -e ~/.pi/agent/extensions/shadow-git.ts ...
 ```
 
 ---
@@ -974,7 +993,7 @@ Decision: {your decision and reasoning}" >> orchestrator/log.md
 | Spawn with tmux | `tmux new-session -d -s NAME "cd DIR && pi ..."` |
 | Spawn headless | `(cd DIR && pi --print-last ...) &` |
 | Spawn blocking | `cd DIR && pi --print-last ...` |
-| Spawn with audit | Add `PI_WORKSPACE_ROOT=... PI_AGENT_NAME=... --hook shadow-git.ts` |
+| Spawn with audit | Add `PI_WORKSPACE_ROOT=... PI_AGENT_NAME=... -e shadow-git.ts` |
 
 ### Process Management
 
@@ -1018,7 +1037,7 @@ EOF
 |-------|-------|
 | `pi ... &` | `(pi --print-last ...) &` or tmux |
 | `nohup pi ...` | tmux (nohup has no TTY) |
-| Relative hook path | Absolute path: `--hook /full/path/to/hook.ts` |
+| Relative extension path | Absolute path: `-e /full/path/to/extension.ts` |
 | Env vars after tmux | Env vars inline: `VAR=x tmux new-session -d "..."` |
 
 ---
@@ -1068,19 +1087,19 @@ open http://localhost:8888/.dashboard.html
 
 **Fix**: Check `~/.pi/agent/settings.json` or use fresh session.
 
-### 5. Hook Not Loading
+### 5. Extension Not Loading
 
 **Problem**: Shadow-git commits not appearing, audit.jsonl not created.
 
-**Cause**: Relative path to hook file.
+**Cause**: Relative path to extension file.
 
 **Fix**: Always use absolute paths:
 ```bash
 # WRONG
---hook ../../hooks/shadow-git.ts
+-e ../../extensions/shadow-git.ts
 
 # RIGHT  
---hook /full/path/to/shadow-git.ts
+-e /full/path/to/shadow-git.ts
 ```
 
 ### 6. Env Vars Not Passed to tmux
@@ -1147,7 +1166,7 @@ kill <pid>
 [ ] Spawn command ready
     [ ] TTY decision: tmux OR --print-last
     [ ] Shadow-git hook: PI_WORKSPACE_ROOT, PI_AGENT_NAME set
-    [ ] Absolute paths for --hook
+    [ ] Absolute paths for -e (extension)
 
 [ ] Monitoring plan
     [ ] How to check status

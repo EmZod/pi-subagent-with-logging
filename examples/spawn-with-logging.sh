@@ -20,8 +20,8 @@ if [ ! -d "$WORKSPACE_DIR" ]; then
 fi
 WORKSPACE_DIR="$(cd "$WORKSPACE_DIR" && pwd)"
 
-HOOK_PATH="$(dirname "$0")/../src/shadow-git.ts"
-HOOK_PATH="$(cd "$(dirname "$HOOK_PATH")" && pwd)/$(basename "$HOOK_PATH")"
+EXTENSION_PATH="$(dirname "$0")/../src/shadow-git.ts"
+EXTENSION_PATH="$(cd "$(dirname "$EXTENSION_PATH")" && pwd)/$(basename "$EXTENSION_PATH")"
 
 # Initialize workspace if needed
 if [ ! -d "$WORKSPACE_DIR/.git" ]; then
@@ -36,7 +36,7 @@ mkdir -p "$AGENT_DIR"/{workspace,output}
 
 echo "Workspace: $WORKSPACE_DIR"
 echo "Agent: $AGENT_NAME"
-echo "Hook: $HOOK_PATH"
+echo "Extension: $EXTENSION_PATH"
 echo ""
 
 # Write spawn script to temp file to avoid shell quoting issues
@@ -53,7 +53,7 @@ pi \\
   --tools read,write,bash \\
   --max-turns 30 \\
   --no-input \\
-  --hook "$HOOK_PATH" \\
+  -e "$EXTENSION_PATH" \\
   "$PROMPT" \\
   2>&1 | tee output/run.log
 
@@ -70,6 +70,10 @@ tmux new-session -d -s "$AGENT_NAME" "bash '$SPAWN_SCRIPT'"
 echo "Spawned agent '$AGENT_NAME' in tmux session"
 echo ""
 echo "Commands:"
-echo "  tmux attach -t $AGENT_NAME    # Observe agent"
-echo "  git -C $WORKSPACE_DIR log     # View commits"
-echo "  cat $AGENT_DIR/audit.jsonl    # View events"
+echo "  tmux attach -t $AGENT_NAME      # Observe agent"
+echo "  git -C $WORKSPACE_DIR log       # View commits"
+echo "  cat $AGENT_DIR/audit.jsonl      # View events"
+echo ""
+echo "Killswitch (if needed):"
+echo "  In agent: /shadow-git disable"
+echo "  Or: PI_SHADOW_GIT_DISABLED=1 when spawning"
