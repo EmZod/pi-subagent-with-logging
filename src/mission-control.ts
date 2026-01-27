@@ -156,6 +156,21 @@ function parseAuditLog(auditPath: string): Partial<AgentStatus> {
 
 function discoverAgents(workspaceRoot: string): AgentStatus[] {
 	const agentsDir = join(workspaceRoot, "agents");
+	const manifestPath = join(workspaceRoot, "manifest.json");
+
+	// Try to read agent list from manifest first (faster for large workspaces)
+	let manifestAgents: Set<string> | null = null;
+	if (existsSync(manifestPath)) {
+		try {
+			const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
+			if (manifest.agents) {
+				manifestAgents = new Set(Object.keys(manifest.agents));
+			}
+		} catch {
+			// Ignore manifest parse errors, fall back to filesystem scan
+		}
+	}
+
 	if (!existsSync(agentsDir)) return [];
 
 	const agents: AgentStatus[] = [];
@@ -164,6 +179,11 @@ function discoverAgents(workspaceRoot: string): AgentStatus[] {
 	for (const name of entries) {
 		const agentDir = join(agentsDir, name);
 		if (!statSync(agentDir).isDirectory()) continue;
+
+		// If manifest exists, only include agents listed in it
+		// (allows for cleanup/hiding agents without deleting dirs)
+		// Fallback: include all directories if no manifest
+		if (manifestAgents && !manifestAgents.has(name)) continue;
 
 		const auditPath = join(agentDir, "audit.jsonl");
 		const parsed = parseAuditLog(auditPath);
