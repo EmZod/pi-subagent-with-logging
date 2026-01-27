@@ -15,11 +15,11 @@ AUDIT="$TEST_WS/agents/test1/audit.jsonl"
 # ASSERTION: tool_call event exists
 if grep -q '"event":"tool_call"' "$AUDIT" 2>/dev/null; then
   echo "PASS: tool_call logged"
-  rm -rf "$TEST_WS"
+  rm -rf "$TEST_WS" 2>/dev/null || true
   exit 0
 else
   echo "FAIL: no tool_call in audit log"
   cat "$AUDIT" 2>/dev/null || true
-  rm -rf "$TEST_WS"
+  rm -rf "$TEST_WS" 2>/dev/null || true
   exit 1
 fi

@@ -16,10 +16,10 @@ AUDIT="$TEST_WS/agents/test1/audit.jsonl"
 if [ -f "$AUDIT" ] && [ -s "$AUDIT" ]; then
   LINES=$(wc -l < "$AUDIT" | tr -d ' ')
   echo "PASS: audit.jsonl has $LINES entries"
-  rm -rf "$TEST_WS"
+  rm -rf "$TEST_WS" 2>/dev/null || true
   exit 0
 else
   echo "FAIL: audit.jsonl missing or empty"
-  rm -rf "$TEST_WS"
+  rm -rf "$TEST_WS" 2>/dev/null || true
   exit 1
 fi

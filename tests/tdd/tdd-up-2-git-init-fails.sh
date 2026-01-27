@@ -14,7 +14,7 @@ OUTPUT=$(PI_WORKSPACE_ROOT="$TEST_WS" PI_AGENT_NAME="test1" \
   -e "$EXT" "What is 2+2?" 2>&1 || true)
 
 chmod 755 "$TEST_WS/agents/test1"
-rm -rf "$TEST_WS"
+rm -rf "$TEST_WS" 2>/dev/null || true
 
 # ASSERTION: Agent should still respond (fail-open)
 if echo "$OUTPUT" | grep -qi "4\|four"; then

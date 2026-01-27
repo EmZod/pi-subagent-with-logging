@@ -18,10 +18,10 @@ ROOT_AFTER=$(git rev-parse HEAD)
 
 if [ "$ROOT_BEFORE" = "$ROOT_AFTER" ]; then
   echo "PASS: workspace root .git unchanged"
-  rm -rf "$TEST_WS"
+  rm -rf "$TEST_WS" 2>/dev/null || true
   exit 0
 else
   echo "FAIL: workspace root .git was modified"
-  rm -rf "$TEST_WS"
+  rm -rf "$TEST_WS" 2>/dev/null || true
   exit 1
 fi

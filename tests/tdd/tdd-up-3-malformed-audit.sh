@@ -14,7 +14,7 @@ OUTPUT=$(PI_WORKSPACE_ROOT="$TEST_WS" \
   pi --max-turns 1 --no-input -p \
   -e "$EXT" "/mc" 2>&1 || true)
 
-rm -rf "$TEST_WS"
+rm -rf "$TEST_WS" 2>/dev/null || true
 
 # ASSERTION: No JSON parse crash
 if echo "$OUTPUT" | grep -qi "SyntaxError\|Unexpected token\|JSON"; then

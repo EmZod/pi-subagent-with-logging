@@ -20,10 +20,10 @@ LOCK_ERRORS=$(grep -r "index.lock\|Unable to create.*lock" "$TEST_WS"/agents/*/a
 
 if [ "$LOCK_ERRORS" -eq 0 ]; then
   echo "PASS: zero lock conflicts"
-  rm -rf "$TEST_WS"
+  rm -rf "$TEST_WS" 2>/dev/null || true
   exit 0
 else
   echo "FAIL: $LOCK_ERRORS lock conflicts detected"
-  rm -rf "$TEST_WS"
+  rm -rf "$TEST_WS" 2>/dev/null || true
   exit 1
 fi

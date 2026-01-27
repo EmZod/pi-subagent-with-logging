@@ -20,7 +20,7 @@ PI_WORKSPACE_ROOT="$TEST_WS" PI_AGENT_NAME="test1" PI_SHADOW_GIT_DISABLED=1 \
   -e "$EXT" "bye" 2>&1 >/dev/null || true
 
 AFTER=$(wc -l < "$AUDIT" 2>/dev/null | tr -d ' ' || echo 0)
-rm -rf "$TEST_WS"
+rm -rf "$TEST_WS" 2>/dev/null || true
 
 # ASSERTION: No new lines added when killswitch active
 if [ "$AFTER" -eq "$BEFORE" ]; then

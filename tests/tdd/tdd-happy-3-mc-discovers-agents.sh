@@ -14,7 +14,7 @@ OUTPUT=$(PI_WORKSPACE_ROOT="$TEST_WS" \
   pi --max-turns 1 --no-input -p \
   -e "$EXT" "/mc" 2>&1 || true)
 
-rm -rf "$TEST_WS"
+rm -rf "$TEST_WS" 2>/dev/null || true
 
 # ASSERTION: Output mentions agents (2 running, or total, etc.)
 if echo "$OUTPUT" | grep -qi "2\|agents\|running"; then

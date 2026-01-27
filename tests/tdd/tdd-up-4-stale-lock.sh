@@ -17,10 +17,10 @@ PI_WORKSPACE_ROOT="$TEST_WS" PI_AGENT_NAME="test1" \
 AUDIT="$TEST_WS/agents/test1/audit.jsonl"
 if [ -f "$TEST_WS/agents/test1/output/x.txt" ] || [ -f "$AUDIT" ]; then
   echo "PASS: agent continued despite stale lock"
-  rm -rf "$TEST_WS"
+  rm -rf "$TEST_WS" 2>/dev/null || true
   exit 0
 else
   echo "FAIL: agent blocked by stale lock"
-  rm -rf "$TEST_WS"
+  rm -rf "$TEST_WS" 2>/dev/null || true
   exit 1
 fi

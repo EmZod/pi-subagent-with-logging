@@ -13,7 +13,7 @@ PI_WORKSPACE_ROOT="$TEST_WS" PI_AGENT_NAME="test1" \
 END=$(date +%s)
 
 DURATION=$((END - START))
-rm -rf "$TEST_WS"
+rm -rf "$TEST_WS" 2>/dev/null || true
 
 # ASSERTION: Should complete in <30s
 if [ "$DURATION" -lt 30 ]; then

@@ -26,7 +26,7 @@ else
 fi
 
 echo "Tool calls: $TOOL_CALLS, Commits: $COMMITS"
-rm -rf "$TEST_WS"
+rm -rf "$TEST_WS" 2>/dev/null || true
 
 # ASSERTION: After refactor, commits should be LESS than tool calls
 # Currently: commits >= tool calls (per-tool commits), so test should FAIL

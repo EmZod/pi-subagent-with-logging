@@ -15,10 +15,10 @@ AUDIT="$TEST_WS/agents/test1/audit.jsonl"
 # ASSERTION: session_start event exists
 if grep -q '"event":"session_start"' "$AUDIT" 2>/dev/null; then
   echo "PASS: session_start logged"
-  rm -rf "$TEST_WS"
+  rm -rf "$TEST_WS" 2>/dev/null || true
   exit 0
 else
   echo "FAIL: no session_start in audit log"
-  rm -rf "$TEST_WS"
+  rm -rf "$TEST_WS" 2>/dev/null || true
   exit 1
 fi

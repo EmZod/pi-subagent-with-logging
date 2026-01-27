@@ -12,10 +12,10 @@ PI_WORKSPACE_ROOT="$TEST_WS" PI_AGENT_NAME="test1" \
 
 if [ -d "$TEST_WS/agents/test1/.git" ]; then
   echo "PASS: agents/test1/.git exists"
-  rm -rf "$TEST_WS"
+  rm -rf "$TEST_WS" 2>/dev/null || true
   exit 0
 else
   echo "FAIL: agents/test1/.git does NOT exist"
-  rm -rf "$TEST_WS"
+  rm -rf "$TEST_WS" 2>/dev/null || true
   exit 1
 fi

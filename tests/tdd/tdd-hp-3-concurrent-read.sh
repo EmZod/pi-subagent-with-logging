@@ -26,7 +26,7 @@ fi
 
 kill $PID 2>/dev/null || true
 wait $PID 2>/dev/null || true
-rm -rf "$TEST_WS"
+rm -rf "$TEST_WS" 2>/dev/null || true
 
 # ASSERTION: Could read file during agent execution
 if [ "$READ_OK" -eq 1 ]; then

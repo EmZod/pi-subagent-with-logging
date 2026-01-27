@@ -131,9 +131,53 @@ export default function (pi: ExtensionAPI) {
 	// Commit queue to prevent concurrent git operations (race condition fix)
 	let commitQueue: Promise<boolean> = Promise.resolve(true);
 
+	// Track if agent repo is initialized
+	let agentRepoInitialized = false;
+
 	// -------------------------------------------------------------------------
 	// Utility Functions
 	// -------------------------------------------------------------------------
+
+	/**
+	 * Initialize a git repository in the agent's directory.
+	 * This gives each agent its own .git, eliminating lock conflicts.
+	 * 
+	 * Goedecke: "One owner, one writer" - each agent owns its own repo.
+	 */
+	async function initAgentRepo(): Promise<boolean> {
+		const gitDir = join(config.agentDir, ".git");
+		
+		// Already initialized
+		if (existsSync(gitDir)) {
+			agentRepoInitialized = true;
+			return true;
+		}
+
+		try {
+			// Initialize git repo in agent directory
+			const init = await pi.exec("git", ["init"], { cwd: config.agentDir });
+			if (init.code !== 0) {
+				throw new Error(`git init failed: ${init.stderr}`);
+			}
+
+			// Create .gitignore to exclude audit.jsonl (it's for real-time, not git)
+			const gitignorePath = join(config.agentDir, ".gitignore");
+			writeFileSync(gitignorePath, "audit.jsonl\n");
+
+			// Initial commit
+			await pi.exec("git", ["add", ".gitignore"], { cwd: config.agentDir });
+			await pi.exec("git", ["commit", "-m", "agent initialized", "--allow-empty"], { cwd: config.agentDir });
+
+			agentRepoInitialized = true;
+			emit("git_init", { agentDir: config.agentDir });
+			return true;
+		} catch (err) {
+			// FAIL-OPEN: Log error but don't block agent
+			emit("git_init_error", { error: String(err) });
+			console.error(`[shadow-git] Failed to init agent repo (continuing): ${err}`);
+			return false;
+		}
+	}
 
 	function isKillswitchActive(): boolean {
 		const val = process.env.PI_SHADOW_GIT_DISABLED;
@@ -159,16 +203,16 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	async function gitCommitInternal(message: string): Promise<boolean> {
+		// Skip if agent repo not initialized (fail-open)
+		if (!agentRepoInitialized) {
+			return true;
+		}
+
 		try {
-			// Stage all changes in agent directory
-			const addAgent = await pi.exec("git", ["-C", config.workspaceRoot, "add", config.agentDir]);
+			// Stage all changes in agent directory (now uses agentDir, not workspaceRoot)
+			const addAgent = await pi.exec("git", ["add", "-A"], { cwd: config.agentDir });
 			if (addAgent.code !== 0) {
 				throw new Error(`git add failed: ${addAgent.stderr}`);
-			}
-
-			// Also stage patches if any
-			if (existsSync(config.patchDir)) {
-				await pi.exec("git", ["-C", config.workspaceRoot, "add", config.patchDir]);
 			}
 
 			// Commit (allow empty for timeline continuity)
@@ -177,13 +221,11 @@ export default function (pi: ExtensionAPI) {
 				: message;
 
 			const commit = await pi.exec("git", [
-				"-C",
-				config.workspaceRoot,
 				"commit",
 				"-m",
 				fullMessage,
 				"--allow-empty",
-			]);
+			], { cwd: config.agentDir });
 
 			if (commit.code !== 0) {
 				throw new Error(`git commit failed: ${commit.stderr}`);
@@ -309,6 +351,9 @@ export default function (pi: ExtensionAPI) {
 		updateStatus(ctx);
 
 		if (!enabled) return;
+
+		// Initialize per-agent git repo (Goedecke: "one owner, one writer")
+		await initAgentRepo();
 
 		emit("session_start", {});
 		await gitCommit(`[${config.agentName}:start] initialized`);
@@ -479,12 +524,10 @@ function registerCommands(
 
 				case "history": {
 					const { stdout, code } = await pi.exec("git", [
-						"-C",
-						config.workspaceRoot,
 						"log",
 						"--oneline",
 						"-20",
-					]);
+					], { cwd: config.agentDir });
 
 					if (code === 0 && stdout.trim()) {
 						const lines = stdout.trim().split("\n");

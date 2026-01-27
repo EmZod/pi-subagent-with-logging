@@ -15,16 +15,16 @@ AGENT_DIR="$TEST_WS/agents/test1"
 if [ -d "$AGENT_DIR/.git" ]; then
   if cd "$AGENT_DIR" && git log --oneline 2>/dev/null | grep -qi "turn"; then
     echo "PASS: commit message includes 'turn'"
-    rm -rf "$TEST_WS"
+    rm -rf "$TEST_WS" 2>/dev/null || true
     exit 0
   else
     echo "FAIL: no commit message with 'turn'"
     cd "$AGENT_DIR" && git log --oneline 2>/dev/null || true
-    rm -rf "$TEST_WS"
+    rm -rf "$TEST_WS" 2>/dev/null || true
     exit 1
   fi
 else
   echo "FAIL: no .git in agent directory (TDD-01 not complete)"
-  rm -rf "$TEST_WS"
+  rm -rf "$TEST_WS" 2>/dev/null || true
   exit 1
 fi
