@@ -78,9 +78,83 @@ workspace/
 | Failure | Behavior |
 |---------|----------|
 | `git init` fails | Log error, continue without git |
-| `git commit` fails | Log error, agent continues |
-| `audit.jsonl` write fails | Log to stderr, continue |
-| Agent directory missing | Create it |
+
+---
+
+## ⚠️ IMPLEMENTATION PROTOCOL (TDD + Backpressure)
+
+**READ THIS FIRST** — This section defines mandatory procedures for ANY implementation agent.
+
+### Test-First Development (TDD)
+
+Every step follows this exact sequence:
+
+```
+1. RUN baseline tests      → Must PASS before touching code
+2. RUN regression tests    → Capture current behavior
+3. IMPLEMENT the step      → Make changes
+4. RUN unit tests         → Verify step-specific behavior
+5. RUN integration tests  → Verify system behavior
+6. RUN regression tests   → Verify nothing broke
+7. RUN hot path tests     → Verify performance acceptable
+8. LOG results            → Update log.md with PASS/FAIL
+```
+
+### ⛔ STOP CONDITIONS (Non-Negotiable)
+
+**If ANY of these occur, STOP IMMEDIATELY:**
+
+| Condition | Action |
+|-----------|--------|
+| Baseline tests fail | Do NOT proceed. Fix environment first. |
+| Unit tests fail after implementation | REVERT changes. Diagnose. |
+| Regression tests fail | REVERT immediately. You broke something. |
+| Lock conflict in parallel test | Architecture is WRONG. Escalate. |
+| Hot path >50% slower | Investigate before proceeding. |
+
+### ✅ PROCEED CONDITIONS
+
+**Only proceed to next step when ALL are true:**
+
+- [ ] All unit tests for current step PASS
+- [ ] All integration tests PASS  
+- [ ] All regression tests PASS (nothing broke)
+- [ ] Hot path benchmarks acceptable
+- [ ] Step logged in `log.md` with PASS status
+
+### Test Commands
+
+```bash
+# Before ANY implementation
+cd /tmp/pi-hook-logging-shitty-state
+./tests/run-all.sh
+
+# After EACH step
+./tests/run-all.sh
+
+# Run specific test
+./tests/unit/step01-per-agent-repos.sh
+./tests/integration/step01-parallel-agents.sh
+```
+
+### Test Files Reference
+
+| Test Type | Location | When to Run |
+|-----------|----------|-------------|
+| Baseline | `tests/baseline/` | Before implementation |
+| Unit | `tests/unit/step*.sh` | After implementing step |
+| Integration | `tests/integration/step*.sh` | After implementing step |
+| Regression | `tests/regression/` | After EVERY change |
+| Hot Path | `tests/hotpath/` | After EVERY change |
+| Unhappy Path | `tests/unhappy/` | After EVERY change |
+
+### Detailed Test Harness
+
+See `TEST-HARNESS.md` for:
+- Complete test scripts with code
+- Per-step test requirements matrix
+- Backpressure decision tree
+- Expected baseline metrics
 
 ---
 
@@ -109,6 +183,21 @@ Currently, git operations target `PI_WORKSPACE_ROOT/.git`. After refactor, each 
 - [ ] Each agent has its own `.git` directory
 - [ ] No shared git state between agents
 - [ ] `audit.jsonl` is gitignored
+
+**🧪 TESTS (Must Pass Before Proceeding):**
+
+| Test | File | Assertion |
+|------|------|-----------|
+| UT-01-01 | `tests/unit/step01-per-agent-repos.sh` | `.git` exists in agent dir |
+| UT-01-02 | `tests/unit/step01-per-agent-repos.sh` | `audit.jsonl` in `.gitignore` |
+| UT-01-03 | `tests/unit/step01-per-agent-repos.sh` | Workspace root `.git` unchanged |
+| IT-01-01 | `tests/integration/step01-parallel-agents.sh` | **ZERO** lock conflicts with 3 parallel agents |
+| RT-* | `tests/regression/core-functionality.sh` | All regression tests still pass |
+
+**⛔ STOP IF:**
+- Lock conflicts detected in IT-01-01 (architecture fundamentally broken)
+- Workspace root `.git` modified (wrong target)
+- Regression tests fail (broke existing behavior)
 
 **Code Sketch:**
 ```typescript
@@ -148,6 +237,20 @@ Currently we commit after every `tool_result`. This creates ~10 commits per turn
 - [ ] Zero commits during tool calls
 - [ ] Exactly 1 commit at turn end
 - [ ] Commit message includes turn number and tool count
+
+**🧪 TESTS (Must Pass Before Proceeding):**
+
+| Test | File | Assertion |
+|------|------|-----------|
+| UT-02-01 | `tests/unit/step02-turn-commits.sh` | Commits < tool calls (turn-level) |
+| UT-02-02 | `tests/unit/step02-turn-commits.sh` | Commit message contains "turn" |
+| IT-02-01 | `tests/integration/step02-commit-reduction.sh` | Commit count reduced by ≥5x |
+| RT-* | `tests/regression/core-functionality.sh` | All regression tests still pass |
+
+**⛔ STOP IF:**
+- Commits ≥ tool calls (no reduction achieved)
+- Regression tests fail
+- audit.jsonl events missing (broke logging)
 
 **Code Sketch:**
 ```typescript
@@ -189,6 +292,20 @@ Instead of relying on git history to reconstruct agent state, we maintain an exp
 - [ ] Updated at every turn end
 - [ ] Committed to git
 
+**🧪 TESTS (Must Pass Before Proceeding):**
+
+| Test | Assertion |
+|------|-----------|
+| Unit | `state.json` created in agent directory |
+| Unit | `state.json` contains valid JSON with required fields |
+| Unit | `state.json` included in git commits |
+| Regression | All RT-* tests pass |
+
+**⛔ STOP IF:**
+- state.json not created
+- state.json has invalid/incomplete structure
+- Regression tests fail
+
 ---
 
 #### STEP-04: Remove commit queue (no longer needed)
@@ -208,6 +325,20 @@ The commit queue was added to serialize git commits to a shared repo. With per-a
 - [ ] Git commits still async (non-blocking)
 - [ ] Simpler code path
 
+**🧪 TESTS (Must Pass Before Proceeding):**
+
+| Test | Assertion |
+|------|-----------|
+| Unit | No `commitQueue` variable in source |
+| Unit | No promise chaining for commits |
+| Integration | Parallel agents still work (IT-01-01) |
+| Regression | All RT-* tests pass |
+
+**⛔ STOP IF:**
+- `commitQueue` still in code
+- Parallel agent test fails (we broke isolation)
+- Regression tests fail
+
 ---
 
 #### STEP-05: Update audit.jsonl to NOT be git-tracked
@@ -226,6 +357,20 @@ The commit queue was added to serialize git commits to a shared repo. With per-a
 - [ ] `audit.jsonl` not tracked by git
 - [ ] Mission Control still works
 - [ ] No git bloat from audit files
+
+**🧪 TESTS (Must Pass Before Proceeding):**
+
+| Test | Assertion |
+|------|-----------|
+| Unit | `audit.jsonl` listed in `.gitignore` |
+| Unit | `git ls-files` does not show `audit.jsonl` |
+| Integration | Mission Control reads audit correctly (RT-05) |
+| Regression | All RT-* tests pass |
+
+**⛔ STOP IF:**
+- audit.jsonl tracked by git
+- Mission Control fails to discover agents
+- Regression tests fail
 
 ---
 
