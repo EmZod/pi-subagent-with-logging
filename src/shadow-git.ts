@@ -657,9 +657,128 @@ function registerCommands(
 					break;
 				}
 
+				case "rollback": {
+					// Usage: /shadow-git rollback <turn>
+					const turnArg = args.trim().split(/\s+/)[1];
+					if (!turnArg) {
+						if (ctx.hasUI) {
+							ctx.ui.notify("Usage: /shadow-git rollback <turn>", "warning");
+						}
+						break;
+					}
+
+					const targetTurn = parseInt(turnArg, 10);
+					if (isNaN(targetTurn)) {
+						if (ctx.hasUI) {
+							ctx.ui.notify(`Invalid turn number: ${turnArg}`, "warning");
+						}
+						break;
+					}
+
+					// Find commit for target turn
+					const { stdout: logOutput } = await pi.exec("git", [
+						"log",
+						"--oneline",
+						"--grep",
+						`:turn-${targetTurn}]`,
+					], { cwd: config.agentDir });
+
+					if (!logOutput.trim()) {
+						if (ctx.hasUI) {
+							ctx.ui.notify(`No commit found for turn ${targetTurn}`, "warning");
+						}
+						break;
+					}
+
+					const commitHash = logOutput.trim().split(" ")[0];
+					
+					// Reset to that commit
+					const { code } = await pi.exec("git", [
+						"reset",
+						"--hard",
+						commitHash,
+					], { cwd: config.agentDir });
+
+					if (code === 0) {
+						if (ctx.hasUI) {
+							ctx.ui.notify(`Rolled back to turn ${targetTurn} (${commitHash})`, "success");
+						}
+					} else {
+						if (ctx.hasUI) {
+							ctx.ui.notify(`Rollback failed`, "warning");
+						}
+					}
+					break;
+				}
+
+				case "branch": {
+					// Usage: /shadow-git branch <name> [from-turn]
+					const branchArgs = args.trim().split(/\s+/).slice(1);
+					const branchName = branchArgs[0];
+					const fromTurn = branchArgs[1] ? parseInt(branchArgs[1], 10) : undefined;
+
+					if (!branchName) {
+						if (ctx.hasUI) {
+							ctx.ui.notify("Usage: /shadow-git branch <name> [from-turn]", "warning");
+						}
+						break;
+					}
+
+					// If from-turn specified, checkout that commit first
+					if (fromTurn !== undefined && !isNaN(fromTurn)) {
+						const { stdout: logOutput } = await pi.exec("git", [
+							"log",
+							"--oneline",
+							"--grep",
+							`:turn-${fromTurn}]`,
+						], { cwd: config.agentDir });
+
+						if (logOutput.trim()) {
+							const commitHash = logOutput.trim().split(" ")[0];
+							await pi.exec("git", ["checkout", commitHash], { cwd: config.agentDir });
+						}
+					}
+
+					// Create new branch
+					const { code } = await pi.exec("git", [
+						"checkout",
+						"-b",
+						branchName,
+					], { cwd: config.agentDir });
+
+					if (code === 0) {
+						if (ctx.hasUI) {
+							ctx.ui.notify(`Created branch '${branchName}'`, "success");
+						}
+					} else {
+						if (ctx.hasUI) {
+							ctx.ui.notify(`Failed to create branch`, "warning");
+						}
+					}
+					break;
+				}
+
+				case "branches": {
+					// List branches
+					const { stdout } = await pi.exec("git", [
+						"branch",
+						"-a",
+					], { cwd: config.agentDir });
+
+					if (stdout.trim()) {
+						const lines = stdout.trim().split("\n");
+						if (ctx.hasUI) {
+							await ctx.ui.select("Branches", lines);
+						}
+					} else if (ctx.hasUI) {
+						ctx.ui.notify("No branches found", "warning");
+					}
+					break;
+				}
+
 				default: {
 					if (ctx.hasUI) {
-						ctx.ui.notify(`Unknown subcommand: ${subcommand}. Use: status|enable|disable|history|stats`, "warning");
+						ctx.ui.notify(`Unknown subcommand: ${subcommand}. Use: status|enable|disable|history|stats|rollback|branch|branches`, "warning");
 					}
 				}
 			}

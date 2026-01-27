@@ -608,3 +608,37 @@ From plan.md, these are optional enhancements:
 
 ## TDD-06: COMPLETE ✓
 
+
+---
+
+## TDD-08: /rollback command
+
+### RED
+**Test:** tdd-08-1-rollback-command: FAIL ✓
+
+**What we're testing:**
+- /shadow-git rollback command exists
+- Can rollback to a previous turn
+
+### GREEN
+**Implementation:**
+- Add "rollback" case to registerCommands
+- Find commit for target turn
+- git reset --hard to that commit
+- Update state.json
+
+
+**Code changed:** `src/shadow-git.ts`
+Added command handlers:
+- `rollback`: Reset to a previous turn's commit
+- `branch`: Create a new branch, optionally from a specific turn
+- `branches`: List all branches
+
+**Test Results:**
+- TDD-08-1 (rollback command): PASS ✓
+- TDD-09-1 (branch command): PASS ✓
+
+---
+
+## TDD-08 and TDD-09: COMPLETE ✓
+
