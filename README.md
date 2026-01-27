@@ -190,6 +190,32 @@ The extension **fails open**:
 
 ## Architecture
 
+### Per-Agent Git Repos (v2.0+)
+
+Each agent now has its own isolated git repository, eliminating lock conflicts:
+
+```
+workspace/
+├── manifest.json                 ← Agent registry for orchestration
+└── agents/
+    ├── scout1/
+    │   ├── .git/                 ← Agent's OWN repo (isolated)
+    │   ├── .gitignore            ← Excludes audit.jsonl
+    │   ├── audit.jsonl           ← Real-time log (NOT in git)
+    │   ├── state.json            ← Checkpoint state (IN git)
+    │   └── output/               ← Work output (IN git)
+    └── scout2/
+        ├── .git/                 ← Completely isolated from scout1
+        └── ...
+```
+
+**Benefits:**
+- **Zero lock conflicts**: Parallel agents never compete for `.git/index.lock`
+- **Turn-level commits**: ~10x fewer commits (per turn, not per tool)
+- **Clean separation**: `audit.jsonl` for real-time observability, git for checkpoints
+
+### Data Flow
+
 ```
 [Orchestrator] spawns [Agent 1] [Agent 2] [Agent 3] ...
                            │         │         │
@@ -197,16 +223,54 @@ The extension **fails open**:
                     [shadow-git extension]
                            │         │         │
                            ▼         ▼         ▼
-                    [workspace/.git] ◄── single git repo
-                           │
-                    [agents/*/audit.jsonl]
-                           │
-                           ▼
-                    [Mission Control] ◄── reads audit files
-                           │
-                           ▼
-                    [TUI Dashboard]
+                    agents/1/.git  agents/2/.git  agents/3/.git
+                           │         │         │
+                           └─────────┴─────────┘
+                                    │
+                           [agents/*/audit.jsonl]
+                                    │
+                                    ▼
+                           [Mission Control] ◄── reads audit + manifest
+                                    │
+                                    ▼
+                             [TUI Dashboard]
 ```
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `/shadow-git rollback <turn>` | Reset agent to previous turn checkpoint |
+| `/shadow-git branch <name> [turn]` | Create branch, optionally from specific turn |
+| `/shadow-git branches` | List all branches |
+
+## Migration
+
+### From v1.x (Shared Git)
+
+If you have an existing workspace with a shared `.git` at the root:
+
+1. **New agents automatically use per-agent repos** - no changes needed
+2. **Old workspaces continue to work** - but won't benefit from isolation
+
+To fully migrate:
+```bash
+# Backup old workspace
+cp -r workspace workspace.backup
+
+# Remove old shared .git (optional)
+rm -rf workspace/.git
+
+# Restart agents - they'll create per-agent repos
+```
+
+### Commit Structure Changes
+
+| v1.x (per-tool) | v2.0+ (per-turn) |
+|-----------------|------------------|
+| `[agent:tool] write: file.txt` | `[agent:turn-1] 3 tools` |
+| `[agent:tool] bash: ls` | `[agent:turn-2] 1 tools` |
+| ~10 commits per turn | ~1 commit per turn |
 
 ## For AI Agents
 

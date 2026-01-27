@@ -684,3 +684,30 @@ Added command handlers:
 
 ## TDD-12: COMPLETE ✓
 
+
+---
+
+## TDD-13, TDD-14, TDD-16: Documentation
+
+### GREEN
+
+**README.md updated:**
+- New architecture section with per-agent git repos diagram
+- Turn-level commits explanation
+- Migration guide from v1.x
+- Commit structure comparison table
+
+**AGENTS.md updated:**
+- New workspace structure with per-agent .git
+- Updated "What This Extension Does" section
+- Documented new commands (rollback, branch)
+
+**Test Results:**
+- TDD-13-1 (README architecture): PASS ✓
+- TDD-14-1 (AGENTS.md updated): PASS ✓
+- TDD-16-1 (Migration docs): PASS ✓
+
+---
+
+## TDD-13, TDD-14, TDD-16: COMPLETE ✓
+

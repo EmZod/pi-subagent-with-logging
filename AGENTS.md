@@ -16,17 +16,19 @@ PI_AGENT_NAME="your-agent-name" \
 
 When enabled, the extension:
 
-1. **Commits after every tool call** — `[agent:tool] write: path/to/file`
-2. **Commits after every turn** — `[agent:turn] turn 3 complete`
-3. **Commits on agent completion** — `[agent:end] completed`
-4. **Writes structured audit logs** — `audit.jsonl` in the agent directory
-5. **Shows status in footer** — `📝 agent-name T3` during execution
-6. **Provides runtime killswitch** — `/shadow-git disable` to stop logging
+1. **Creates per-agent git repo** — `agents/{name}/.git` (isolated from other agents)
+2. **Commits at turn boundaries** — `[agent:turn-3] 2 tools` (not per-tool)
+3. **Writes checkpoint state** — `state.json` with agent status
+4. **Writes structured audit logs** — `audit.jsonl` (real-time, not in git)
+5. **Updates workspace manifest** — `manifest.json` for orchestration
+6. **Shows status in footer** — `📝 agent-name T3` during execution
+7. **Provides runtime killswitch** — `/shadow-git disable` to stop logging
 
 This enables the orchestrator to:
-- View agent history with `git log`
-- Branch from any point with `git checkout -b`
-- Rewind agent state with `git checkout HEAD~N`
+- Run parallel agents without lock conflicts
+- View agent history with `cd agents/{name} && git log`
+- Rollback to any turn with `/shadow-git rollback <turn>`
+- Branch from any turn with `/shadow-git branch <name> [turn]`
 - Query events with `jq` on the audit file
 - Disable logging during incidents without restarting
 
@@ -66,21 +68,34 @@ Use these commands during agent execution:
 | `/shadow-git history` | Show last 20 commits |
 | `/shadow-git stats` | Show commit/error counts |
 
-## File Structure
+## Workspace Structure (v2.0+)
 
-When the extension runs, it expects this workspace structure:
+The extension now uses **per-agent git repos** for isolation:
 
 ```
 {PI_WORKSPACE_ROOT}/
-├── .git/                    # Required: workspace must be a git repo
-├── agents/
-│   └── {PI_AGENT_NAME}/
-│       ├── audit.jsonl      # Created by extension: structured event log
-│       ├── plan.md          # Your agent's plan (optional)
-│       ├── log.md           # Your agent's execution log (optional)
-│       └── output/          # Your agent's outputs (optional)
-└── target-patches/          # Created by extension: diffs of target repo changes
+├── manifest.json                 # Agent registry (auto-created)
+└── agents/
+    └── {PI_AGENT_NAME}/
+        ├── .git/                 # Agent's OWN git repo (auto-created)
+        ├── .gitignore            # Excludes audit.jsonl from git
+        ├── audit.jsonl           # Real-time event log (NOT in git)
+        ├── state.json            # Checkpoint state (IN git)
+        ├── plan.md               # Your agent's plan (optional)
+        ├── log.md                # Your agent's execution log (optional)
+        └── output/               # Your agent's outputs (IN git)
 ```
+
+**Key Changes:**
+- Each agent has `agents/{name}/.git` — completely isolated from other agents
+- No workspace root `.git` required anymore (agents create their own)
+- `audit.jsonl` is NOT tracked by git (for real-time observability)
+- `state.json` IS tracked by git (for checkpoints/rollback)
+
+**Benefits:**
+- **Zero lock conflicts** when running parallel agents
+- **Turn-level commits** (~10x fewer commits)
+- **Clean separation**: Real-time data vs checkpoints
 
 ## Spawning Pattern
 
