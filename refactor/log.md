@@ -1,15 +1,17 @@
 # STATE
 
 ## Current
-step_id: TDD-01-1
-status: IN_PROGRESS
-objective: Implement per-agent git repositories (STEP-01)
+step_id: CRITICAL_PATH_COMPLETE
+status: COMPLETE
+objective: 10x refactor - per-agent repos + turn-level commits
 
 ## Decisions (append-only)
 - STEP-00: Adopting per-agent git repos + turn-level commits architecture
+- STEP-02: Keep session_start commit, remove agent_end commit (user decision)
+- STEP-02: Test assertion updated to check zero `:tool]` commits (not commits <= tools)
 
 ## Blockers (append-only, mark resolved inline)
-(none yet)
+(none)
 
 ---
 

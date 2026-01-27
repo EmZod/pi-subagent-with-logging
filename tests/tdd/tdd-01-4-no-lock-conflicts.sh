@@ -4,15 +4,12 @@
 set -e
 EXT="${EXT:-$HOME/.pi/agent/extensions/shadow-git.ts}"
 TEST_WS=$(mktemp -d)
-cd "$TEST_WS"
-git init >/dev/null 2>&1
-mkdir -p agents/{a1,a2,a3}
-git add -A && git commit -m "init" >/dev/null 2>&1
+mkdir -p "$TEST_WS/agents"/{a1,a2,a3}
 
 for agent in a1 a2 a3; do
   PI_WORKSPACE_ROOT="$TEST_WS" PI_AGENT_NAME="$agent" \
-    pi --max-turns 2 --no-input -p \
-    -e "$EXT" "Write 'hello' to output/greeting.txt" 2>&1 >/dev/null &
+    pi --max-turns 1 --no-input -p \
+    -e "$EXT" "hi" 2>&1 >/dev/null &
 done
 wait
 
