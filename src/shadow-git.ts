@@ -226,6 +226,35 @@ export default function (pi: ExtensionAPI) {
 	// -------------------------------------------------------------------------
 
 	/**
+	 * Check for and clean up stale lock files.
+	 * Lock files older than 60 seconds are considered stale.
+	 */
+	function cleanStaleLocks(): void {
+		const lockFile = join(config.agentDir, ".git", "index.lock");
+		
+		if (!existsSync(lockFile)) return;
+
+		try {
+			const { statSync, unlinkSync } = require("fs");
+			const stat = statSync(lockFile);
+			const ageMs = Date.now() - stat.mtimeMs;
+			const maxAgeMs = 60 * 1000; // 60 seconds
+
+			if (ageMs > maxAgeMs) {
+				unlinkSync(lockFile);
+				emit("lock_cleaned", { file: lockFile, ageMs });
+				console.log(`[shadow-git] Cleaned stale lock file (${Math.round(ageMs / 1000)}s old)`);
+			} else {
+				emit("lock_detected", { file: lockFile, ageMs });
+				console.log(`[shadow-git] Lock file detected (${Math.round(ageMs / 1000)}s old)`);
+			}
+		} catch (err) {
+			emit("lock_error", { file: lockFile, error: String(err) });
+			console.error(`[shadow-git] Failed to check/clean lock: ${err}`);
+		}
+	}
+
+	/**
 	 * Initialize a git repository in the agent's directory.
 	 * This gives each agent its own .git, eliminating lock conflicts.
 	 * 
@@ -233,6 +262,11 @@ export default function (pi: ExtensionAPI) {
 	 */
 	async function initAgentRepo(): Promise<boolean> {
 		const gitDir = join(config.agentDir, ".git");
+
+		// Clean any stale locks first
+		if (existsSync(gitDir)) {
+			cleanStaleLocks();
+		}
 		
 		// Already initialized
 		if (existsSync(gitDir)) {

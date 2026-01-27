@@ -642,3 +642,45 @@ Added command handlers:
 
 ## TDD-08 and TDD-09: COMPLETE ✓
 
+
+---
+
+## TDD-10: No execSync
+
+**Test:** TDD-10-1: PASS ✓ (already using pi.exec)
+
+---
+
+## TDD-10: COMPLETE ✓
+
+---
+
+## TDD-12: Stale lock cleanup
+
+### RED
+**Test:** TDD-12-1: FAIL ✓
+
+**What we're testing:**
+- Stale lock files should be detected and cleaned up
+- Agent should continue even with stale locks
+
+### GREEN
+**Implementation:**
+- Add checkAndCleanLocks() function
+- Call before git operations
+- Remove .git/index.lock if older than 60 seconds
+
+
+**Code changed:** `src/shadow-git.ts`
+- Added `cleanStaleLocks()` function
+- Checks for .git/index.lock
+- If older than 60 seconds, removes it
+- Logs lock detection/cleanup events
+
+**Test Results:**
+- TDD-12-1 (stale lock cleanup): PASS ✓
+
+---
+
+## TDD-12: COMPLETE ✓
+
