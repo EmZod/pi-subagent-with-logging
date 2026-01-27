@@ -450,13 +450,84 @@ class MissionControlComponent {
 }
 
 // =============================================================================
+// Compact Status Widget (shows above editor)
+// =============================================================================
+
+class StatusWidget {
+	private workspaceRoot: string;
+	private interval: ReturnType<typeof setInterval> | null = null;
+	private cachedLines: string[] = [];
+	private onUpdate: () => void;
+
+	constructor(workspaceRoot: string, onUpdate: () => void) {
+		this.workspaceRoot = workspaceRoot;
+		this.onUpdate = onUpdate;
+		this.refresh();
+		this.startAutoRefresh();
+	}
+
+	private startAutoRefresh(): void {
+		this.interval = setInterval(() => {
+			this.refresh();
+			this.onUpdate();
+		}, 3000); // Refresh every 3 seconds
+	}
+
+	stop(): void {
+		if (this.interval) {
+			clearInterval(this.interval);
+			this.interval = null;
+		}
+	}
+
+	private refresh(): void {
+		const agents = discoverAgents(this.workspaceRoot);
+		const running = agents.filter((a) => a.status === "running");
+		const done = agents.filter((a) => a.status === "done").length;
+		const errors = agents.filter((a) => a.status === "error").length;
+		const pending = agents.filter((a) => a.status === "pending").length;
+
+		// Build compact status line
+		const parts: string[] = [];
+		
+		if (running.length > 0) {
+			const runningNames = running.slice(0, 3).map((a) => a.name).join(", ");
+			const more = running.length > 3 ? ` +${running.length - 3}` : "";
+			parts.push(`\x1b[32m● ${running.length} running\x1b[0m (${runningNames}${more})`);
+		}
+		if (pending > 0) parts.push(`\x1b[2m○ ${pending} pending\x1b[0m`);
+		if (done > 0) parts.push(`\x1b[36m✓ ${done} done\x1b[0m`);
+		if (errors > 0) parts.push(`\x1b[31m✗ ${errors} errors\x1b[0m`);
+
+		if (parts.length === 0) {
+			this.cachedLines = ["\x1b[2m🚀 Mission Control: No agents\x1b[0m"];
+		} else {
+			this.cachedLines = [`\x1b[1m🚀 Mission Control:\x1b[0m ${parts.join(" │ ")}`];
+		}
+	}
+
+	render(): string[] {
+		return this.cachedLines;
+	}
+
+	invalidate(): void {
+		this.refresh();
+	}
+}
+
+// =============================================================================
 // Extension Registration
 // =============================================================================
 
 export function registerMissionControl(pi: ExtensionAPI): void {
-	const openDashboard = async (_args: string, ctx: ExtensionContext) => {
-		const workspaceRoot = process.env.PI_WORKSPACE_ROOT;
+	const workspaceRoot = process.env.PI_WORKSPACE_ROOT;
+	let widgetInstance: StatusWidget | null = null;
+	let widgetEnabled = false;
 
+	// -------------------------------------------------------------------------
+	// Open full dashboard (blocking)
+	// -------------------------------------------------------------------------
+	const openDashboard = async (_args: string, ctx: ExtensionContext) => {
 		if (!workspaceRoot) {
 			if (ctx.hasUI) {
 				ctx.ui.notify("PI_WORKSPACE_ROOT not set", "error");
@@ -485,6 +556,57 @@ export function registerMissionControl(pi: ExtensionAPI): void {
 		});
 	};
 
+	// -------------------------------------------------------------------------
+	// Widget control (persistent status above editor)
+	// -------------------------------------------------------------------------
+	const enableWidget = (ctx: ExtensionContext) => {
+		if (!workspaceRoot || !ctx.hasUI) return;
+		if (widgetEnabled) return;
+
+		widgetInstance = new StatusWidget(workspaceRoot, () => {
+			// Force TUI refresh by re-setting widget
+			if (widgetInstance && ctx.hasUI) {
+				ctx.ui.setWidget("mission-control", () => ({
+					render: () => widgetInstance!.render(),
+					invalidate: () => widgetInstance!.invalidate(),
+				}));
+			}
+		});
+
+		ctx.ui.setWidget("mission-control", () => ({
+			render: () => widgetInstance!.render(),
+			invalidate: () => widgetInstance!.invalidate(),
+		}));
+
+		widgetEnabled = true;
+		ctx.ui.notify("Mission Control widget enabled (Ctrl+Shift+M to toggle)", "info");
+	};
+
+	const disableWidget = (ctx: ExtensionContext) => {
+		if (!ctx.hasUI) return;
+		if (!widgetEnabled) return;
+
+		if (widgetInstance) {
+			widgetInstance.stop();
+			widgetInstance = null;
+		}
+
+		ctx.ui.setWidget("mission-control", undefined);
+		widgetEnabled = false;
+		ctx.ui.notify("Mission Control widget disabled", "info");
+	};
+
+	const toggleWidget = (ctx: ExtensionContext) => {
+		if (widgetEnabled) {
+			disableWidget(ctx);
+		} else {
+			enableWidget(ctx);
+		}
+	};
+
+	// -------------------------------------------------------------------------
+	// Commands
+	// -------------------------------------------------------------------------
 	pi.registerCommand("mission-control", {
 		description: "Open Mission Control dashboard for monitoring agents",
 		handler: openDashboard,
@@ -493,5 +615,50 @@ export function registerMissionControl(pi: ExtensionAPI): void {
 	pi.registerCommand("mc", {
 		description: "Alias for /mission-control",
 		handler: openDashboard,
+	});
+
+	pi.registerCommand("mc-widget", {
+		description: "Toggle Mission Control status widget (on|off)",
+		handler: async (args, ctx) => {
+			const cmd = args.trim().toLowerCase();
+			if (cmd === "on") {
+				enableWidget(ctx);
+			} else if (cmd === "off") {
+				disableWidget(ctx);
+			} else {
+				toggleWidget(ctx);
+			}
+		},
+	});
+
+	// -------------------------------------------------------------------------
+	// Keyboard shortcut: Ctrl+Shift+M to toggle widget
+	// -------------------------------------------------------------------------
+	pi.registerShortcut("ctrl+shift+m", {
+		description: "Toggle Mission Control widget",
+		handler: async (ctx) => {
+			toggleWidget(ctx);
+		},
+	});
+
+	// -------------------------------------------------------------------------
+	// Auto-enable widget on session start if workspace is configured
+	// -------------------------------------------------------------------------
+	pi.on("session_start", async (_event, ctx) => {
+		// Auto-enable widget if we have a workspace with agents
+		if (workspaceRoot && ctx.hasUI) {
+			const agents = discoverAgents(workspaceRoot);
+			if (agents.length > 0) {
+				enableWidget(ctx);
+			}
+		}
+	});
+
+	// Cleanup on shutdown
+	pi.on("session_shutdown", async () => {
+		if (widgetInstance) {
+			widgetInstance.stop();
+			widgetInstance = null;
+		}
 	});
 }

@@ -45,6 +45,16 @@ pi -e shadow-git.ts
 - Sort by status, activity, or name
 - Detail panel for selected agent
 
+**Persistent Widget:**
+- Shows compact status above the editor while you work
+- Auto-enables when workspace has agents
+- Toggle with `Ctrl+Shift+M` or `/mc-widget`
+- Updates every 3 seconds
+
+```
+🚀 Mission Control: ● 2 running (scout1, worker2) │ ○ 1 pending │ ✓ 1 done
+```
+
 **Keyboard Controls:**
 | Key | Action |
 |-----|--------|
@@ -97,13 +107,22 @@ git log --oneline
 
 | Command | Description |
 |---------|-------------|
-| `/mission-control` | Open Mission Control dashboard |
+| `/mission-control` | Open full Mission Control dashboard |
 | `/mc` | Alias for mission-control |
+| `/mc-widget` | Toggle persistent status widget |
+| `/mc-widget on` | Enable status widget |
+| `/mc-widget off` | Disable status widget |
 | `/shadow-git` | Show logging status |
 | `/shadow-git enable` | Enable logging |
 | `/shadow-git disable` | Disable logging (killswitch) |
 | `/shadow-git history` | Show last 20 commits |
 | `/shadow-git stats` | Show commit/error statistics |
+
+## Keyboard Shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl+Shift+M` | Toggle Mission Control widget |
 
 ## Environment Variables
 
