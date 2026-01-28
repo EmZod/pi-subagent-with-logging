@@ -112,7 +112,6 @@ If you just need to spawn ONE agent quickly, here's the minimum viable setup:
 WORKSPACE="$HOME/workspaces/$(date +%Y%m%d)-task"
 mkdir -p "$WORKSPACE/agents/scout1"/{workspace,output}
 cd "$WORKSPACE"
-git init && git commit --allow-empty -m "Initial workspace"
 
 # 2. Write the plan
 cat > agents/scout1/plan.md << 'EOF'
@@ -154,8 +153,8 @@ cat agents/scout1/output/findings.md
 2. [Pre-Flight Decisions](#pre-flight-decisions)
 3. [Workspace Structure](#workspace-structure)
 4. [Spawning Methods](#spawning-methods)
-5. [Shadow Git Hook (Audit Trail)](#shadow-git-hook-audit-trail)
-6. [Live Dashboard for Monitoring](#live-dashboard-for-monitoring)
+5. [Shadow Git Extension (Audit Trail)](#shadow-git-extension-audit-trail)
+6. [Mission Control Dashboard](#mission-control-dashboard)
 7. [Output Aggregation Patterns](#output-aggregation-patterns)
 8. [Git-Based Coordination](#git-based-coordination)
 9. [Logging Protocol](#logging-protocol)
@@ -183,10 +182,11 @@ cat agents/scout1/output/findings.md
 
 | Feature | Pi Sessions | Shadow Git |
 |---------|-------------|------------|
-| Scope | Per-agent, per-cwd | Cross-agent, single workspace |
+| Scope | Per-agent, per-cwd | Per-agent repos, unified workspace |
 | Branching | Tree structure, UI-driven | Git branches, CLI-driven |
-| Multi-agent | Separate session files | Unified git history |
+| Multi-agent | Separate session files | Per-agent repos, shared manifest |
 | Audit queries | Limited | `git log`, `jq` on JSONL |
+| Rollback | Limited | `/shadow-git rollback <turn>` |
 | Target repo changes | Not tracked | Captured as patches |
 
 **Use both**: Pi sessions for individual agent state, shadow git for orchestration-level audit trail.
@@ -253,39 +253,46 @@ nohup pi ... &        # WRONG: nohup doesn't provide TTY
 
 ## Workspace Structure
 
-Every orchestration task needs a workspace:
+### Per-Agent Git Repos (v2.0+)
+
+Each agent has its **own isolated git repository**, eliminating lock conflicts:
 
 ```
 {workspace_root}/
-├── .git/                      # REQUIRED: For shadow git audit trail
+├── manifest.json                  # Agent registry (auto-created by extension)
 ├── orchestrator/
-│   ├── decisions.md           # Pre-flight decisions
-│   ├── log.md                 # Orchestrator's execution log
-│   └── synthesis/             # Final outputs
+│   ├── decisions.md               # Pre-flight decisions
+│   ├── log.md                     # Orchestrator's execution log
+│   └── synthesis/                 # Final outputs
 │
-├── agents/
-│   ├── {agent_name}/
-│   │   ├── plan.md            # REQUIRED: What to do
-│   │   ├── log.md             # Agent's execution log
-│   │   ├── audit.jsonl        # Created by shadow-git hook
-│   │   ├── workspace/         # Agent's working files
-│   │   └── output/            # Agent's deliverables
-│   │
-│   └── {agent_name_2}/
-│       └── ...
-│
-└── target-patches/            # Created by shadow-git: changes to external repos
+└── agents/
+    ├── {agent_name}/
+    │   ├── .git/                  # Agent's OWN repo (auto-created)
+    │   ├── .gitignore             # Excludes audit.jsonl
+    │   ├── audit.jsonl            # Real-time event log (NOT in git)
+    │   ├── state.json             # Checkpoint state (IN git)
+    │   ├── plan.md                # REQUIRED: What to do
+    │   ├── log.md                 # Agent's execution log
+    │   └── output/                # Agent's deliverables (IN git)
+    │
+    └── {agent_name_2}/
+        ├── .git/                  # Completely isolated from other agents
+        └── ...
 ```
+
+**Key Benefits:**
+- **Zero lock conflicts** — Parallel agents never compete for `.git/index.lock`
+- **Turn-level commits** — ~10x fewer commits (per turn, not per tool)
+- **Clean separation** — `audit.jsonl` for real-time observability, git for checkpoints
+- **Rollback/branch** — Per-agent history with `/shadow-git rollback` and `/shadow-git branch`
 
 ### Creating a Workspace
 
 ```bash
-# Full setup with git (required for shadow-git hook)
+# Create workspace (no git init needed at root - agents create their own)
 WORKSPACE="$HOME/workspaces/$(date +%Y%m%d)-$TASK_NAME"
 mkdir -p "$WORKSPACE"/{orchestrator,agents}
 cd "$WORKSPACE"
-git init
-git commit --allow-empty -m "Initialize orchestration workspace"
 
 # Create orchestrator files
 cat > orchestrator/decisions.md << 'EOF'
@@ -359,36 +366,47 @@ EOF
 **Why tmux?** It provides a virtual terminal, so pi's TUI works. You can attach to observe progress, costs, and debug.
 
 ```bash
-# Single agent
-tmux new-session -d -s scout1 \
-  "cd agents/scout1 && \
+WORKSPACE="$(pwd)"
+AGENT="scout1"
+EXT="$HOME/.pi/agent/extensions/shadow-git.ts"
+
+# Single agent with shadow-git logging
+tmux new-session -d -s "$AGENT" \
+  "cd $WORKSPACE/agents/$AGENT && \
+   PI_WORKSPACE_ROOT='$WORKSPACE' \
+   PI_AGENT_NAME='$AGENT' \
    pi --model claude-haiku-4-5 \
       --tools read,bash,browser \
       --max-turns 30 \
       --no-input \
+      -e '$EXT' \
       'Read plan.md and execute it.' \
       2>&1 | tee output/run.log"
 
 # Check if running
-tmux has-session -t scout1 2>/dev/null && echo "Running" || echo "Done"
+tmux has-session -t "$AGENT" 2>/dev/null && echo "Running" || echo "Done"
 
 # Attach to observe (Ctrl+B then D to detach)
-tmux attach -t scout1
+tmux attach -t "$AGENT"
 
 # Kill if stuck
-tmux kill-session -t scout1
+tmux kill-session -t "$AGENT"
 ```
 
 **Multiple agents in parallel:**
 
 ```bash
+WORKSPACE="$(pwd)"
+EXT="$HOME/.pi/agent/extensions/shadow-git.ts"
 AGENTS="scout1 scout2 scout3"
 
 for agent in $AGENTS; do
   tmux new-session -d -s "$agent" \
-    "cd agents/$agent && \
+    "cd $WORKSPACE/agents/$agent && \
+     PI_WORKSPACE_ROOT='$WORKSPACE' \
+     PI_AGENT_NAME='$agent' \
      pi --model claude-haiku-4-5 --max-turns 30 --no-input \
-     'Read plan.md and execute.' 2>&1 | tee output/run.log"
+     -e '$EXT' 'Read plan.md and execute.' 2>&1 | tee output/run.log"
   echo "Spawned: $agent"
 done
 
@@ -410,37 +428,29 @@ echo "All done"
 **CRITICAL:** The `--print-last` flag is MANDATORY. It disables the TUI.
 
 ```bash
+WORKSPACE="$(pwd)"
+AGENT="scout1"
+EXT="$HOME/.pi/agent/extensions/shadow-git.ts"
+
 # Single agent
-(cd agents/scout1 && \
+(cd $WORKSPACE/agents/$AGENT && \
+ PI_WORKSPACE_ROOT="$WORKSPACE" \
+ PI_AGENT_NAME="$AGENT" \
  pi --model claude-haiku-4-5 \
     --max-turns 20 \
     --no-input \
     --print-last \
+    -e "$EXT" \
     'Read plan.md and execute.' \
     2>&1 | tee output/run.log) &
-echo $! > agents/scout1/pid
+echo $! > agents/$AGENT/pid
 
 # Check if running
-ps -p $(cat agents/scout1/pid) >/dev/null 2>&1 && echo "Running" || echo "Done"
+ps -p $(cat agents/$AGENT/pid) >/dev/null 2>&1 && echo "Running" || echo "Done"
 
 # Wait for completion
-wait $(cat agents/scout1/pid)
+wait $(cat agents/$AGENT/pid)
 echo "Exit code: $?"
-```
-
-**Multiple agents:**
-
-```bash
-for agent in scout1 scout2 scout3; do
-  (cd agents/$agent && \
-   pi --print-last --model claude-haiku-4-5 --max-turns 20 --no-input \
-   'Read plan.md and execute.' 2>&1 | tee output/run.log) &
-  echo $! > agents/$agent/pid
-done
-
-# Wait for all
-wait
-echo "All agents completed"
 ```
 
 ### Method 3: Blocking (Sequential)
@@ -448,16 +458,21 @@ echo "All agents completed"
 **When to use:** Agent B needs Agent A's output.
 
 ```bash
+WORKSPACE="$(pwd)"
+EXT="$HOME/.pi/agent/extensions/shadow-git.ts"
+
 # Agent 1 (blocking - wait for result)
-cd agents/scout
+cd $WORKSPACE/agents/scout
+PI_WORKSPACE_ROOT="$WORKSPACE" PI_AGENT_NAME="scout" \
 pi --model claude-haiku-4-5 --max-turns 20 --no-input --print-last \
-   'Read plan.md and execute.' > output/result.txt 2>&1
+   -e "$EXT" 'Read plan.md and execute.' > output/result.txt 2>&1
 
 # Agent 2 (uses Agent 1's output)
-FINDINGS=$(cat agents/scout/output/result.txt)
-cd agents/planner
+FINDINGS=$(cat $WORKSPACE/agents/scout/output/result.txt)
+cd $WORKSPACE/agents/planner
+PI_WORKSPACE_ROOT="$WORKSPACE" PI_AGENT_NAME="planner" \
 pi --model claude-sonnet-4-20250514 --max-turns 20 --no-input --print-last \
-   "Based on these findings: $FINDINGS - create implementation plan." \
+   -e "$EXT" "Based on these findings: $FINDINGS - create implementation plan." \
    > output/result.txt 2>&1
 ```
 
@@ -465,16 +480,16 @@ pi --model claude-sonnet-4-20250514 --max-turns 20 --no-input --print-last \
 
 ## Shadow Git Extension (Audit Trail)
 
-The shadow-git extension creates a git-based audit trail of all agent activity. Every tool call, turn, and agent completion is committed to the workspace's git repo.
+The shadow-git extension creates a **per-agent git-based audit trail**. Every turn completion is committed to the agent's isolated git repo.
 
 ### Why Use It?
 
 | Benefit | How |
 |---------|-----|
-| **Audit trail** | `git log` shows all agent actions |
-| **Branching** | `git checkout -b` to fork agent execution |
-| **Rewinding** | `git checkout HEAD~5` to go back in time |
-| **Multi-agent tracking** | All agents commit to same repo |
+| **Audit trail** | `git log` shows all agent turns |
+| **Rollback** | `/shadow-git rollback <turn>` to go back |
+| **Branching** | `/shadow-git branch <name>` to fork execution |
+| **Zero lock conflicts** | Each agent has own `.git` |
 | **Structured queries** | `jq` on audit.jsonl for analytics |
 | **Killswitch** | `/shadow-git disable` or env var to stop |
 | **Fail-open** | Git errors logged but don't block agent |
@@ -482,13 +497,13 @@ The shadow-git extension creates a git-based audit trail of all agent activity. 
 ### Installation
 
 ```bash
-# Option 1: Clone the repo
-git clone https://github.com/EmZod/pi-hook-logging.git ~/.pi-extensions
+# Clone the repo
+git clone https://github.com/EmZod/pi-hook-logging.git
 
-# Option 2: Copy to global extensions (auto-loaded)
+# Copy to global extensions (auto-loaded)
 mkdir -p ~/.pi/agent/extensions
-curl -o ~/.pi/agent/extensions/shadow-git.ts \
-  https://raw.githubusercontent.com/EmZod/pi-hook-logging/main/src/shadow-git.ts
+cp pi-hook-logging/src/shadow-git.ts ~/.pi/agent/extensions/
+cp pi-hook-logging/src/mission-control.ts ~/.pi/agent/extensions/
 ```
 
 ### Usage
@@ -497,7 +512,7 @@ curl -o ~/.pi/agent/extensions/shadow-git.ts \
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `PI_WORKSPACE_ROOT` | Yes | Absolute path to workspace (must be git repo) |
+| `PI_WORKSPACE_ROOT` | Yes | Absolute path to workspace |
 | `PI_AGENT_NAME` | Yes | Agent name (used in commits and paths) |
 | `PI_TARGET_REPOS` | No | Comma-separated paths to track external repos |
 | `PI_TARGET_BRANCH` | No | Branch name to include in commits |
@@ -506,8 +521,7 @@ curl -o ~/.pi/agent/extensions/shadow-git.ts \
 **Spawning with shadow-git:**
 
 ```bash
-# Using tmux (RECOMMENDED)
-WORKSPACE="/path/to/workspace"
+WORKSPACE="$(pwd)"
 AGENT="scout1"
 EXT="$HOME/.pi/agent/extensions/shadow-git.ts"
 
@@ -523,18 +537,18 @@ tmux new-session -d -s "$AGENT" \
       2>&1 | tee output/run.log"
 ```
 
-**Using the spawn script (easiest):**
+### Commands
 
-```bash
-# Clone the extension repo
-git clone https://github.com/EmZod/pi-hook-logging.git
-
-# Use the spawn script
-./pi-hook-logging/examples/spawn-with-logging.sh \
-  "/path/to/workspace" \
-  "scout1" \
-  "Read plan.md and execute."
-```
+| Command | Description |
+|---------|-------------|
+| `/shadow-git` | Show current status |
+| `/shadow-git enable` | Enable logging |
+| `/shadow-git disable` | Disable logging (killswitch) |
+| `/shadow-git history` | Show last 20 commits |
+| `/shadow-git stats` | Show commit/error counts |
+| `/shadow-git rollback <turn>` | Reset to previous turn checkpoint |
+| `/shadow-git branch <name> [turn]` | Create branch, optionally from turn |
+| `/shadow-git branches` | List all branches |
 
 ### Killswitch (Emergency Disable)
 
@@ -554,13 +568,13 @@ The extension **fails open**: git errors are logged but don't block the agent.
 
 ### What Gets Logged
 
-**Git commits:**
+**Git commits (turn-level):**
 ```
-aed6ec9 [scout1:turn] turn 5 complete
-87fc5bc [scout1:tool] write: output/findings.md
-6622667 [scout1:turn] turn 2 complete
-983e96f [scout1:tool] read: plan.md
-b53d7f7 [scout1:start] initialized
+9187798 [scout1:turn-3] no tools
+8e0685e [scout1:turn-2] 1 tools
+b705c6a [scout1:turn-1] 2 tools
+95b964d [scout1:start] session began
+6780e53 agent initialized
 ```
 
 **Audit JSONL** (`agents/scout1/audit.jsonl`):
@@ -573,11 +587,8 @@ b53d7f7 [scout1:start] initialized
 ### Querying the Audit Trail
 
 ```bash
-# View agent history
-git log --oneline
-
-# View specific agent's commits
-git log --oneline --grep="scout1"
+# View agent history (in agent directory)
+cd agents/scout1 && git log --oneline
 
 # Query audit events
 jq 'select(.event == "tool_call")' agents/scout1/audit.jsonl
@@ -589,116 +600,74 @@ jq 'select(.error == true)' agents/scout1/audit.jsonl
 jq -c '{ts: .ts, event: .event, tool: .tool}' agents/scout1/audit.jsonl
 ```
 
-### Branching and Forking Execution
+### Rollback and Branching
 
 ```bash
-# See history
+# During execution, use commands:
+/shadow-git rollback 2    # Go back to turn 2
+/shadow-git branch fix    # Create branch from current state
+/shadow-git branch alt 1  # Create branch from turn 1
+/shadow-git branches      # List all branches
+
+# Or via git directly (in agent directory):
+cd agents/scout1
 git log --oneline
-
-# Branch from specific point
 git checkout -b alt-approach abc1234
-
-# Kill current agent
-tmux kill-session -t scout1
-
-# Spawn new agent from branched state
-PI_WORKSPACE_ROOT="$(pwd)" PI_AGENT_NAME="scout1-v2" \
-  pi -e ~/.pi/agent/extensions/shadow-git.ts ...
 ```
 
 ---
 
-## Live Dashboard for Monitoring
+## Mission Control Dashboard
 
-A real-time dashboard helps visualize multi-agent orchestration. Located at `~/.pi/bin/pi-dashboard-smooth`.
-
-### Architecture (Goedecke-Approved: Simple, Boring, Works)
-
-```
-[Agents] → [shadow-git] → [audit.jsonl]
-                              ↓
-                    [Data Generator Script]
-                              ↓
-                    [.dashboard-data.json]
-                              ↓
-                    [Browser JS polling]
-                              ↓
-                    [AnimeJS DOM updates]
-```
-
-### Why This Architecture?
-
-| Bad Approach | Problem | Good Approach |
-|--------------|---------|---------------|
-| Meta refresh `<meta http-equiv="refresh">` | Jarring flash, loses scroll, restarts animations | JS polling + JSON |
-| file:// URLs | Browser blocks `fetch()` for security | Serve via HTTP |
-| Check tmux for status | tmux session exists after agent_end | Check audit.jsonl first |
-| Inline data in HTML | Must regenerate entire HTML on each update | Separate JSON data file |
+A real-time TUI dashboard for monitoring multiple agents.
 
 ### Quick Start
 
 ```bash
-# Start dashboard for a workspace
-~/.pi/bin/pi-dashboard-smooth /path/to/workspace 2 &
+# Set workspace root and start pi with the extension
+PI_WORKSPACE_ROOT="/path/to/workspace" pi -e ~/.pi/agent/extensions/shadow-git.ts
 
-# Serve via HTTP (required for fetch to work)
-python3 -m http.server 8888 --directory /path/to/workspace &
-
-# Open in browser
-open http://localhost:8888/.dashboard.html
+# Open dashboard
+/mc
+# or
+/mission-control
 ```
 
-### Status Detection Order (CRITICAL)
+### Features
 
-The dashboard must check status in this order:
+- Real-time status for all agents (running, done, error, pending)
+- Turn count, tool calls, error count per agent
+- Auto-refresh every 2 seconds
+- Scrollable list for 100s of agents
+- Sort by status, activity, or name
+- Detail panel for selected agent
 
-```bash
-# CORRECT ORDER:
-if grep -q '"event":"agent_end"' audit.jsonl; then
-  status="done"      # Agent completed, even if tmux still open
-elif tmux has-session -t "$agent"; then
-  status="running"   # Tmux exists, no agent_end = still working
-elif [ -f "output/*.md" ]; then
-  status="done"      # Has output files
-else
-  status="pending"   # Not started
-fi
+### Keyboard Controls
+
+| Key | Action |
+|-----|--------|
+| `↑/↓` or `j/k` | Navigate agents |
+| `Enter` | Toggle detail panel |
+| `s` | Cycle sort mode |
+| `r` | Manual refresh |
+| `q` or `Esc` | Close dashboard |
+
+### Persistent Widget
+
+Shows compact status above the editor while you work:
+
+```
+🚀 Mission Control: ● 2 running │ ○ 1 pending │ ✓ 1 done
 ```
 
-**Why?** Tmux sessions persist after agent completion (waiting for "press enter to close"). If you only check tmux, completed agents show as "running" forever.
+Toggle with `/mc-widget` or `Ctrl+Shift+M`.
 
-### Atomic File Writes
+### Data Sources
 
-Always write data atomically to prevent dashboard reading partial files:
-
-```bash
-# WRONG: Dashboard might read half-written file
-cat > data.json << EOF
-{"agents": [...]}
-EOF
-
-# RIGHT: Atomic write
-cat > data.json.tmp << EOF
-{"agents": [...]}
-EOF
-mv data.json.tmp data.json
-```
-
-### Premium Dashboard (Gemini-Generated)
-
-For a stunning visual experience, use the Gemini-generated dashboard:
-
-```bash
-# Location
-/Users/jay/Documents/Broad Building/daily_workspaces/jan5/experimental-dashboard/mission_control.html
-
-# Features:
-# - Gooey blob animations for agents
-# - Glassmorphism panels
-# - Canvas particle background
-# - Smooth number transitions with AnimeJS
-# - Real-time activity feed
-```
+Mission Control reads:
+1. `manifest.json` — Agent registry (status, spawn time, PID)
+2. `agents/*/audit.jsonl` — Event logs for turn/tool counts
+3. `agents/*/state.json` — Checkpoint state
 
 ---
 
@@ -707,12 +676,6 @@ For a stunning visual experience, use the Gemini-generated dashboard:
 ### Pattern A: Orchestrator Reads All (Simple)
 
 **Use when:** 3-5 agents, small outputs.
-
-```
-[scout1] → output/findings.md ─┐
-[scout2] → output/findings.md ─┼─→ [Orchestrator reads all] → User
-[scout3] → output/findings.md ─┘
-```
 
 ```bash
 # After all agents complete, orchestrator reads outputs
@@ -726,12 +689,6 @@ done
 ### Pattern B: Aggregator Subagent
 
 **Use when:** Many agents, complex synthesis needed.
-
-```
-[scout1] ─┐
-[scout2] ─┼─→ [aggregator] → output/synthesis.md → [Orchestrator] → User
-[scout3] ─┘
-```
 
 ```bash
 # Create aggregator after scouts complete
@@ -759,7 +716,9 @@ EOF
 
 # Spawn aggregator (blocking - we need the result)
 cd agents/aggregator
+PI_WORKSPACE_ROOT="$(pwd)/../.." PI_AGENT_NAME="aggregator" \
 pi --model claude-sonnet-4-20250514 --max-turns 15 --no-input --print-last \
+   -e ~/.pi/agent/extensions/shadow-git.ts \
    'Read plan.md and execute.' 2>&1 | tee output/run.log
 ```
 
@@ -777,26 +736,6 @@ for agent in scout1 scout2 scout3; do
   cat agents/$agent/output/findings.md
   echo "---"
 done > results/all-findings.md
-```
-
-### Pattern D: User-Driven Exploration
-
-**Use when:** Uncertain value, user wants control.
-
-Present menu to user:
-```
-All 5 scouts completed:
-
-| Agent | Focus | Summary |
-|-------|-------|---------|
-| scout1 | Frameworks | Found 6 frameworks |
-| scout2 | Use Cases | 4 production deployments |
-| scout3 | Benchmarks | 3 benchmark suites |
-
-Options:
-1. "Show scout2's findings" — Read specific output
-2. "Synthesize scout1 and scout3" — Partial synthesis
-3. "Synthesize all" — Full synthesis
 ```
 
 ---
@@ -846,9 +785,6 @@ git add -A && git commit -m "Planner: implementation plan"
 # Stage 3: Implement
 cd agents/worker && pi ... 'Execute plan'
 git add -A && git commit -m "Worker: implementation complete"
-
-# Stage 4: Review
-cd agents/reviewer && pi ... 'Review all commits on branch'
 ```
 
 ---
@@ -905,24 +841,6 @@ objective: {what we're doing}
 3. **ATOMIC STEPS** — Pre → Execution → Post, then sealed
 4. **LOG UNCERTAINTY** — Don't hide ambiguity, document it
 
-### Subagent Prompt Template
-
-Include this in every subagent prompt:
-
-```
-## LOGGING REQUIREMENTS
-
-Maintain append-only log.md:
-- Before each step: Log objective, assumptions
-- During: Log findings, progress
-- After: Log outcome (PASS/PARTIAL/FAIL), mark COMPLETE
-
-RULES:
-- NEVER edit previous entries
-- Backtrack = new step that fixes forward
-- Uncertainty = log it, choose simplest approach
-```
-
 ---
 
 ## Error Handling and Recovery
@@ -961,25 +879,17 @@ tmux new-session -d -s scout1-resume \
   "cd agents/scout1-resume && pi ... 'Read plan.md and continue work.'"
 ```
 
-### Agent Exceeds Max Turns
+### Using Rollback for Recovery
 
 ```bash
-# Check progress
-cat agents/scout1/log.md | grep "COMPLETE"
+# If agent made bad changes, rollback to earlier turn
+# First, attach to agent or use commands file:
+/shadow-git rollback 5  # Go back to turn 5
 
-# If partially done, spawn continuation
-# If stuck, review plan.md clarity and respawn with better instructions
-```
-
-### Conflicting Outputs
-
-Log both versions, don't resolve automatically:
-```bash
-# In orchestrator log
-echo "## CONFLICT: scout1 vs scout2
-scout1 says: X
-scout2 says: Y
-Decision: {your decision and reasoning}" >> orchestrator/log.md
+# Or via git:
+cd agents/scout1
+git log --oneline
+git reset --hard abc1234  # Reset to good commit
 ```
 
 ---
@@ -990,10 +900,9 @@ Decision: {your decision and reasoning}" >> orchestrator/log.md
 
 | Task | Command |
 |------|---------|
-| Spawn with tmux | `tmux new-session -d -s NAME "cd DIR && pi ..."` |
-| Spawn headless | `(cd DIR && pi --print-last ...) &` |
-| Spawn blocking | `cd DIR && pi --print-last ...` |
-| Spawn with audit | Add `PI_WORKSPACE_ROOT=... PI_AGENT_NAME=... -e shadow-git.ts` |
+| Spawn with tmux | `tmux new-session -d -s NAME "cd DIR && PI_WORKSPACE_ROOT=... PI_AGENT_NAME=... pi -e shadow-git.ts ..."` |
+| Spawn headless | `(cd DIR && PI_WORKSPACE_ROOT=... PI_AGENT_NAME=... pi --print-last -e shadow-git.ts ...) &` |
+| Spawn blocking | `cd DIR && PI_WORKSPACE_ROOT=... PI_AGENT_NAME=... pi --print-last -e shadow-git.ts ...` |
 
 ### Process Management
 
@@ -1005,6 +914,20 @@ Decision: {your decision and reasoning}" >> orchestrator/log.md
 | Observe | `tmux attach -t NAME` | `tail -f output/run.log` |
 | List all | `tmux ls` | `ps aux \| grep pi` |
 
+### Shadow Git Commands
+
+| Command | Description |
+|---------|-------------|
+| `/shadow-git` | Show status |
+| `/shadow-git enable/disable` | Toggle logging |
+| `/shadow-git history` | Show commits |
+| `/shadow-git stats` | Show counts |
+| `/shadow-git rollback <turn>` | Reset to turn |
+| `/shadow-git branch <name> [turn]` | Create branch |
+| `/shadow-git branches` | List branches |
+| `/mc` | Open Mission Control |
+| `/mc-widget` | Toggle status widget |
+
 ### Models
 
 | Model | Use For | Cost | Relative |
@@ -1012,135 +935,53 @@ Decision: {your decision and reasoning}" >> orchestrator/log.md
 | `claude-haiku-4-5` | Fast research, simple tasks | ~$0.001/turn | 1x |
 | `claude-sonnet-4-20250514` | Complex reasoning, implementation | ~$0.01/turn | 10x |
 | `claude-opus-4-5` | Hardest problems, synthesis | ~$0.015/turn | 15x |
-| `claude-opus-4-5` + thinking | Extended reasoning | ~$0.05/turn | 50x |
 
 **⚠️ WARNING: CLI `--model` flag is IGNORED!** Pi uses `~/.pi/agent/settings.json`.
-See "Before You Start" section. ALWAYS set settings.json first:
-```bash
-cat > ~/.pi/agent/settings.json << 'EOF'
-{"defaultProvider":"anthropic","defaultModel":"claude-haiku-4-5","defaultThinkingLevel":"none"}
-EOF
-```
-
-### Tool Sets
-
-| Tools | Use For |
-|-------|---------|
-| `read,grep,find,ls` | Read-only research |
-| `read,bash,browser` | Web research |
-| `read,write,edit,bash` | Implementation |
-| (all default) | Full capability |
-
-### Common Mistakes
-
-| Wrong | Right |
-|-------|-------|
-| `pi ... &` | `(pi --print-last ...) &` or tmux |
-| `nohup pi ...` | tmux (nohup has no TTY) |
-| Relative extension path | Absolute path: `-e /full/path/to/extension.ts` |
-| Env vars after tmux | Env vars inline: `VAR=x tmux new-session -d "..."` |
 
 ---
 
 ## Gotchas and Hard-Won Lessons
 
-These are real issues encountered during orchestration. Learn from them.
+### 1. Use `-e` Not `--hook`
 
-### 1. Stale Dashboard HTML
+**Wrong:** `pi --hook shadow-git.ts ...` (deprecated)
+**Right:** `pi -e shadow-git.ts ...`
 
-**Problem**: Dashboard shows old data even after agents complete.
+### 2. Set PI_WORKSPACE_ROOT for Mission Control
 
-**Cause**: Dashboard process was killed, HTML file is stale, browser auto-refreshes but loads same old file.
-
-**Fix**: Check if dashboard generator is running. If not, delete `.dashboard.html` and restart.
-
-### 2. Agent Shows "Running" Forever
-
-**Problem**: Dashboard shows agent as "running" but it completed.
-
-**Cause**: Status check looks at tmux session, which persists after `agent_end`.
-
-**Fix**: Check `agent_end` event in audit.jsonl BEFORE checking tmux:
 ```bash
-if grep -q '"event":"agent_end"' audit.jsonl; then
-  status="done"  # Even if tmux session still exists
-fi
+# Mission Control needs this to find agents
+PI_WORKSPACE_ROOT=/path/to/workspace pi -e shadow-git.ts
+# Then: /mc
 ```
 
-### 3. Numbers Frozen at Zero
+### 3. Extension Path Must Be Absolute in tmux
 
-**Problem**: Dashboard shows 0 for turns/tools despite agents working.
-
-**Cause**: Browser opened via `file://` URL, `fetch()` blocked by security.
-
-**Fix**: Serve via HTTP:
 ```bash
-python3 -m http.server 8888 --directory "$WORKSPACE"
-open http://localhost:8888/.dashboard.html
-```
+# WRONG: Relative path may fail
+-e ./shadow-git.ts
 
-### 4. Model Override Ignored
-
-**Problem**: Specified `--model claude-haiku-4-5` but agent uses Opus.
-
-**Cause**: Pi may have session state or config that overrides CLI flags.
-
-**Fix**: Check `~/.pi/agent/settings.json` or use fresh session.
-
-### 5. Extension Not Loading
-
-**Problem**: Shadow-git commits not appearing, audit.jsonl not created.
-
-**Cause**: Relative path to extension file.
-
-**Fix**: Always use absolute paths:
-```bash
-# WRONG
--e ../../extensions/shadow-git.ts
-
-# RIGHT  
+# RIGHT: Absolute path
 -e /full/path/to/shadow-git.ts
+# or
+-e ~/.pi/agent/extensions/shadow-git.ts
 ```
 
-### 6. Env Vars Not Passed to tmux
+### 4. Env Vars Must Be Set Inside tmux Command
 
-**Problem**: `PI_WORKSPACE_ROOT` not set inside tmux session.
-
-**Cause**: Env vars set after tmux command, not inherited.
-
-**Fix**: Set env vars inline BEFORE the command:
 ```bash
-# WRONG
-tmux new-session -d -s agent "PI_WORKSPACE_ROOT=$PWD pi ..."
+# WRONG: Vars not passed to tmux subshell
+PI_WORKSPACE_ROOT="$PWD" tmux new-session -d -s agent "pi ..."
 
-# RIGHT
-PI_WORKSPACE_ROOT="$PWD" tmux new-session -d -s agent "PI_WORKSPACE_ROOT='$PWD' pi ..."
+# RIGHT: Set vars inside the command string
+tmux new-session -d -s agent "PI_WORKSPACE_ROOT='$PWD' PI_AGENT_NAME='agent' pi ..."
 ```
 
-### 7. Partial File Reads
+### 5. Check manifest.json for Agent Status
 
-**Problem**: Dashboard shows corrupted or partial data.
-
-**Cause**: Reading file while it's being written.
-
-**Fix**: Atomic writes:
 ```bash
-cat > file.json.tmp << EOF
-{"data": ...}
-EOF
-mv file.json.tmp file.json
-```
-
-### 8. Orphaned HTTP Servers
-
-**Problem**: Port 8888 already in use.
-
-**Cause**: Previous HTTP server not killed.
-
-**Fix**: Find and kill:
-```bash
-lsof -i :8888
-kill <pid>
+# Quick status check
+cat workspace/manifest.json | jq '.agents | to_entries[] | {name: .key, status: .value.status}'
 ```
 
 ---
@@ -1154,24 +995,23 @@ kill <pid>
     [ ] Aggregation strategy
 
 [ ] Workspace setup
-    [ ] git init (required for shadow-git)
-    [ ] orchestrator/decisions.md
-    [ ] agents/{name}/ directories
+    [ ] agents/{name}/ directories created
+    [ ] orchestrator/decisions.md written
 
 [ ] Per-agent setup
     [ ] plan.md with clear steps
-    [ ] log.md initialized
     [ ] output/ directory exists
 
 [ ] Spawn command ready
     [ ] TTY decision: tmux OR --print-last
-    [ ] Shadow-git hook: PI_WORKSPACE_ROOT, PI_AGENT_NAME set
-    [ ] Absolute paths for -e (extension)
+    [ ] PI_WORKSPACE_ROOT and PI_AGENT_NAME set
+    [ ] -e with absolute path to shadow-git.ts
+    [ ] --max-turns set
 
 [ ] Monitoring plan
-    [ ] How to check status
-    [ ] What to do if agent fails
-    [ ] When/how to collect outputs
+    [ ] Mission Control ready (/mc)
+    [ ] Know how to check status
+    [ ] Know how to kill if stuck
 ```
 
 ---

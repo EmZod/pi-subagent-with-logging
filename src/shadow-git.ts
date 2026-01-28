@@ -36,7 +36,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, isAbsolute } from "node:path";
-import { registerMissionControl } from "./mission-control.js";
+import { registerMissionControl } from "./lib/mission-control.js";
 
 // =============================================================================
 // Types
