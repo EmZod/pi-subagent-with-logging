@@ -1,6 +1,6 @@
 ---
-name: pi-subagent-orchestration
-description: Orchestrate subagents in pi for complex, parallelizable tasks. Use when decomposing work across multiple isolated agents - research, implementation, review, refactoring, or any task benefiting from parallel execution or context isolation. Covers blocking (wait for results) and non-blocking (background) patterns, workspace setup, logging protocol enforcement, git-based coordination, and long-duration task integrity.
+name: pi-subagent-orchestration-git-only
+description: Orchestrate subagents in pi with git-based logging and Mission Control. Use when spawning multiple agents that need audit trails, rollback, branching, and real-time monitoring. Covers per-agent git repos, turn-level commits, workspace setup, and the shadow-git extension.
 ---
 
 # Pi Subagent Orchestration
@@ -77,7 +77,7 @@ uptime
 ```bash
 # 1. Check for existing agents
 tmux ls 2>/dev/null || echo "No tmux sessions"
-ps aux | grep -E "[p]i --model" | grep -v grep
+ps aux | grep -E "[p]i " | grep -v grep
 
 # 2. Kill any stale agents from previous work
 tmux kill-server 2>/dev/null
@@ -128,18 +128,30 @@ Research X and produce findings.
 - output/findings.md
 EOF
 
-# 3. Spawn (tmux for observability)
-tmux new-session -d -s scout1 \
-  "cd $WORKSPACE/agents/scout1 && \
-   pi --model claude-haiku-4-5 --max-turns 20 --no-input \
-   'Read plan.md and execute it.' \
-   2>&1 | tee output/run.log"
+# 3. Spawn (using --print for non-interactive mode)
+(cd $WORKSPACE/agents/scout1 && \
+ pi \
+    --model claude-haiku-4-5 \
+    --max-turns 20 \
+    --print \
+    'Read plan.md and execute it.' \
+    2>&1 | tee output/run.log) &
+echo $! > agents/scout1/pid
 
 # 4. Check status
-tmux has-session -t scout1 2>/dev/null && echo "Running" || echo "Done"
+ps -p $(cat agents/scout1/pid) >/dev/null 2>&1 && echo "Running" || echo "Done"
 
 # 5. View output when done
 cat agents/scout1/output/findings.md
+```
+
+**Alternative: Use tmux for observability** (can attach to see progress):
+```bash
+tmux new-session -d -s scout1 \
+  "cd $WORKSPACE/agents/scout1 && \
+   pi --model claude-haiku-4-5 --max-turns 20 \
+   'Read plan.md and execute it.' \
+   2>&1 | tee output/run.log"
 ```
 
 **That's it.** For more complex orchestration (multiple agents, audit trails, coordination), read on.
@@ -205,13 +217,13 @@ Do you need to OBSERVE the agent while it runs?
 ├── YES → Use tmux (provides virtual terminal)
 │         tmux new-session -d -s name "pi ..."
 │
-└── NO → Use --print-last flag (disables TUI)
-          (pi --print-last ...) &
+└── NO → Use --print flag (disables TUI, non-interactive mode)
+          (pi --print ...) &
 ```
 
 **NEVER do this:**
 ```bash
-pi ... &              # WRONG: No TTY, no --print-last → crash
+pi ... &              # WRONG: No TTY, no --print → crash
 nohup pi ... &        # WRONG: nohup doesn't provide TTY
 ```
 
@@ -225,8 +237,8 @@ nohup pi ... &        # WRONG: nohup doesn't provide TTY
 
 | Mode | When | How |
 |------|------|-----|
-| **Blocking** | Need result before continuing | `pi --print-last ...` (no `&`) |
-| **Non-blocking** | Fire and forget, check later | tmux or `(pi --print-last ...) &` |
+| **Blocking** | Need result before continuing | `pi --print ...` (no `&`) |
+| **Non-blocking** | Fire and forget, check later | tmux or `(pi --print ...) &` |
 | **Parallel + Join** | Multiple independent tasks, wait for all | Spawn all, then `wait` |
 
 ### 2. Environment Strategy
@@ -314,7 +326,7 @@ cat > orchestrator/decisions.md << 'EOF'
 | Name | Role | Model | Tools |
 |------|------|-------|-------|
 | scout1 | research | claude-haiku-4-5 | read,bash,browser |
-| worker1 | implement | claude-sonnet-4-20250514 | read,write,edit,bash |
+| worker1 | implement | claude-sonnet-4-5 | read,write,edit,bash |
 EOF
 
 echo "# Orchestrator Log" > orchestrator/log.md
@@ -361,9 +373,9 @@ EOF
 
 ## Spawning Methods
 
-### Method 1: tmux (RECOMMENDED for most cases)
+### Method 1: tmux (RECOMMENDED for observability)
 
-**Why tmux?** It provides a virtual terminal, so pi's TUI works. You can attach to observe progress, costs, and debug.
+**Why tmux?** It provides a virtual terminal, so pi's TUI works. You can attach to observe progress, costs, and debug in real-time.
 
 ```bash
 WORKSPACE="$(pwd)"
@@ -375,10 +387,10 @@ tmux new-session -d -s "$AGENT" \
   "cd $WORKSPACE/agents/$AGENT && \
    PI_WORKSPACE_ROOT='$WORKSPACE' \
    PI_AGENT_NAME='$AGENT' \
-   pi --model claude-haiku-4-5 \
+   pi \
+      --model claude-haiku-4-5 \
       --tools read,bash,browser \
       --max-turns 30 \
-      --no-input \
       -e '$EXT' \
       'Read plan.md and execute it.' \
       2>&1 | tee output/run.log"
@@ -405,7 +417,7 @@ for agent in $AGENTS; do
     "cd $WORKSPACE/agents/$agent && \
      PI_WORKSPACE_ROOT='$WORKSPACE' \
      PI_AGENT_NAME='$agent' \
-     pi --model claude-haiku-4-5 --max-turns 30 --no-input \
+     pi --model claude-haiku-4-5 --max-turns 30 \
      -e '$EXT' 'Read plan.md and execute.' 2>&1 | tee output/run.log"
   echo "Spawned: $agent"
 done
@@ -421,11 +433,11 @@ done
 echo "All done"
 ```
 
-### Method 2: Bash Background with --print-last
+### Method 2: Bash Background with --print (RECOMMENDED for headless)
 
-**When to use:** Simple tasks where you don't need to observe progress.
+**When to use:** Simple tasks where you don't need to observe progress. Fire-and-forget style.
 
-**CRITICAL:** The `--print-last` flag is MANDATORY. It disables the TUI.
+**CRITICAL:** The `--print` flag (or `-p`) is MANDATORY. It disables the TUI and runs non-interactively.
 
 ```bash
 WORKSPACE="$(pwd)"
@@ -436,10 +448,10 @@ EXT="$HOME/.pi/agent/extensions/shadow-git.ts"
 (cd $WORKSPACE/agents/$AGENT && \
  PI_WORKSPACE_ROOT="$WORKSPACE" \
  PI_AGENT_NAME="$AGENT" \
- pi --model claude-haiku-4-5 \
+ pi \
+    --model claude-haiku-4-5 \
     --max-turns 20 \
-    --no-input \
-    --print-last \
+    --print \
     -e "$EXT" \
     'Read plan.md and execute.' \
     2>&1 | tee output/run.log) &
@@ -464,14 +476,14 @@ EXT="$HOME/.pi/agent/extensions/shadow-git.ts"
 # Agent 1 (blocking - wait for result)
 cd $WORKSPACE/agents/scout
 PI_WORKSPACE_ROOT="$WORKSPACE" PI_AGENT_NAME="scout" \
-pi --model claude-haiku-4-5 --max-turns 20 --no-input --print-last \
+pi --model claude-haiku-4-5 --max-turns 20 --print \
    -e "$EXT" 'Read plan.md and execute.' > output/result.txt 2>&1
 
 # Agent 2 (uses Agent 1's output)
 FINDINGS=$(cat $WORKSPACE/agents/scout/output/result.txt)
 cd $WORKSPACE/agents/planner
 PI_WORKSPACE_ROOT="$WORKSPACE" PI_AGENT_NAME="planner" \
-pi --model claude-sonnet-4-20250514 --max-turns 20 --no-input --print-last \
+pi --model claude-sonnet-4-5 --max-turns 20 --print \
    -e "$EXT" "Based on these findings: $FINDINGS - create implementation plan." \
    > output/result.txt 2>&1
 ```
@@ -525,16 +537,29 @@ WORKSPACE="$(pwd)"
 AGENT="scout1"
 EXT="$HOME/.pi/agent/extensions/shadow-git.ts"
 
+# Option A: tmux (for observability)
 tmux new-session -d -s "$AGENT" \
   "cd $WORKSPACE/agents/$AGENT && \
    PI_WORKSPACE_ROOT='$WORKSPACE' \
    PI_AGENT_NAME='$AGENT' \
-   pi --model claude-haiku-4-5 \
+   pi \
+      --model claude-haiku-4-5 \
       --max-turns 30 \
-      --no-input \
       -e '$EXT' \
       'Read plan.md and execute.' \
       2>&1 | tee output/run.log"
+
+# Option B: Background with --print (headless)
+(cd $WORKSPACE/agents/$AGENT && \
+ PI_WORKSPACE_ROOT="$WORKSPACE" \
+ PI_AGENT_NAME="$AGENT" \
+ pi \
+    --model claude-haiku-4-5 \
+    --max-turns 30 \
+    --print \
+    -e "$EXT" \
+    'Read plan.md and execute.' \
+    2>&1 | tee output/run.log) &
 ```
 
 ### Commands
@@ -717,7 +742,7 @@ EOF
 # Spawn aggregator (blocking - we need the result)
 cd agents/aggregator
 PI_WORKSPACE_ROOT="$(pwd)/../.." PI_AGENT_NAME="aggregator" \
-pi --model claude-sonnet-4-20250514 --max-turns 15 --no-input --print-last \
+pi --model claude-sonnet-4-5 --max-turns 15 --print \
    -e ~/.pi/agent/extensions/shadow-git.ts \
    'Read plan.md and execute.' 2>&1 | tee output/run.log
 ```
@@ -900,9 +925,9 @@ git reset --hard abc1234  # Reset to good commit
 
 | Task | Command |
 |------|---------|
-| Spawn with tmux | `tmux new-session -d -s NAME "cd DIR && PI_WORKSPACE_ROOT=... PI_AGENT_NAME=... pi -e shadow-git.ts ..."` |
-| Spawn headless | `(cd DIR && PI_WORKSPACE_ROOT=... PI_AGENT_NAME=... pi --print-last -e shadow-git.ts ...) &` |
-| Spawn blocking | `cd DIR && PI_WORKSPACE_ROOT=... PI_AGENT_NAME=... pi --print-last -e shadow-git.ts ...` |
+| Spawn with tmux | `tmux new-session -d -s NAME "cd DIR && PI_WORKSPACE_ROOT=... PI_AGENT_NAME=... pi --model MODEL -e shadow-git.ts ..."` |
+| Spawn headless | `(cd DIR && PI_WORKSPACE_ROOT=... PI_AGENT_NAME=... pi --model MODEL --print -e shadow-git.ts ...) &` |
+| Spawn blocking | `cd DIR && PI_WORKSPACE_ROOT=... PI_AGENT_NAME=... pi --model MODEL --print -e shadow-git.ts ...` |
 
 ### Process Management
 
@@ -933,7 +958,7 @@ git reset --hard abc1234  # Reset to good commit
 | Model | Use For | Cost | Relative |
 |-------|---------|------|----------|
 | `claude-haiku-4-5` | Fast research, simple tasks | ~$0.001/turn | 1x |
-| `claude-sonnet-4-20250514` | Complex reasoning, implementation | ~$0.01/turn | 10x |
+| `claude-sonnet-4-5` | Complex reasoning, implementation | ~$0.01/turn | 10x |
 | `claude-opus-4-5` | Hardest problems, synthesis | ~$0.015/turn | 15x |
 
 **⚠️ WARNING: CLI `--model` flag is IGNORED!** Pi uses `~/.pi/agent/settings.json`.
@@ -942,12 +967,19 @@ git reset --hard abc1234  # Reset to good commit
 
 ## Gotchas and Hard-Won Lessons
 
-### 1. Use `-e` Not `--hook`
+### 1. Use `--print` Not `--print-last`
+
+**Wrong:** `pi --print-last ...` (flag doesn't exist!)
+**Right:** `pi --print ...` or `pi -p ...`
+
+The `--print` flag runs pi in non-interactive mode: it processes the prompt and exits without the TUI.
+
+### 2. Use `-e` Not `--hook`
 
 **Wrong:** `pi --hook shadow-git.ts ...` (deprecated)
 **Right:** `pi -e shadow-git.ts ...`
 
-### 2. Set PI_WORKSPACE_ROOT for Mission Control
+### 3. Set PI_WORKSPACE_ROOT for Mission Control
 
 ```bash
 # Mission Control needs this to find agents
@@ -955,7 +987,7 @@ PI_WORKSPACE_ROOT=/path/to/workspace pi -e shadow-git.ts
 # Then: /mc
 ```
 
-### 3. Extension Path Must Be Absolute in tmux
+### 4. Extension Path Must Be Absolute in tmux
 
 ```bash
 # WRONG: Relative path may fail
@@ -967,7 +999,7 @@ PI_WORKSPACE_ROOT=/path/to/workspace pi -e shadow-git.ts
 -e ~/.pi/agent/extensions/shadow-git.ts
 ```
 
-### 4. Env Vars Must Be Set Inside tmux Command
+### 5. Env Vars Must Be Set Inside tmux Command
 
 ```bash
 # WRONG: Vars not passed to tmux subshell
@@ -977,7 +1009,7 @@ PI_WORKSPACE_ROOT="$PWD" tmux new-session -d -s agent "pi ..."
 tmux new-session -d -s agent "PI_WORKSPACE_ROOT='$PWD' PI_AGENT_NAME='agent' pi ..."
 ```
 
-### 5. Check manifest.json for Agent Status
+### 6. Check manifest.json for Agent Status
 
 ```bash
 # Quick status check
@@ -1003,13 +1035,14 @@ cat workspace/manifest.json | jq '.agents | to_entries[] | {name: .key, status: 
     [ ] output/ directory exists
 
 [ ] Spawn command ready
-    [ ] TTY decision: tmux OR --print-last
-    [ ] PI_WORKSPACE_ROOT and PI_AGENT_NAME set
+    [ ] TTY decision: tmux OR --print
+    [ ] settings.json configured with correct model
+    [ ] PI_WORKSPACE_ROOT and PI_AGENT_NAME set (for shadow-git)
     [ ] -e with absolute path to shadow-git.ts
     [ ] --max-turns set
 
 [ ] Monitoring plan
-    [ ] Mission Control ready (/mc)
+    [ ] Mission Control ready (/mc) if using shadow-git
     [ ] Know how to check status
     [ ] Know how to kill if stuck
 ```
