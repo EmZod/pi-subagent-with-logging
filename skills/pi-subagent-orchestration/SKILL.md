@@ -508,15 +508,35 @@ The shadow-git extension creates a **per-agent git-based audit trail**. Every tu
 
 ### Installation
 
+**Option A: Pi Package (Recommended)**
+
+```bash
+# Install globally - includes extension AND this skill
+pi install git:github.com/EmZod/pi-hook-logging-shitty-state
+
+# Or install for project only
+pi install -l git:github.com/EmZod/pi-hook-logging-shitty-state
+
+# Or try without installing
+pi -e git:github.com/EmZod/pi-hook-logging-shitty-state
+```
+
+Once installed, the extension is automatically loaded. No `-e` flag needed.
+
+**Option B: Manual Installation**
+
 ```bash
 # Clone the repo
-git clone https://github.com/EmZod/pi-hook-logging.git
+git clone https://github.com/EmZod/pi-hook-logging-shitty-state.git
 
-# Copy to global extensions (auto-loaded)
+# Copy to global extensions
 mkdir -p ~/.pi/agent/extensions
-cp pi-hook-logging/src/shadow-git.ts ~/.pi/agent/extensions/
-cp pi-hook-logging/src/mission-control.ts ~/.pi/agent/extensions/
+cp pi-hook-logging-shitty-state/extensions/shadow-git.ts ~/.pi/agent/extensions/
+cp pi-hook-logging-shitty-state/extensions/lib/mission-control.ts ~/.pi/agent/extensions/
 ```
+
+> **Note on `-e` flag:** Examples below show `-e "$EXT"` for manual installation. 
+> If you installed via `pi install`, the extension auto-loads and you can omit the `-e` flag entirely.
 
 ### Usage
 

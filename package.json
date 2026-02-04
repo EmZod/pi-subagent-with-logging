@@ -1,0 +1,30 @@
+{
+  "name": "@emzod/pi-shadow-git",
+  "version": "1.0.0",
+  "description": "Git-based orchestration logging for pi subagents with Mission Control dashboard",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "agent",
+    "orchestration",
+    "git",
+    "logging",
+    "subagent",
+    "mission-control"
+  ],
+  "author": "EmZod",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/EmZod/pi-hook-logging-shitty-state"
+  },
+  "type": "module",
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-tui": "*"
+  },
+  "pi": {
+    "extensions": ["./extensions"],
+    "skills": ["./skills"]
+  }
+}
