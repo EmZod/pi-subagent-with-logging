@@ -16,7 +16,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/EmZod/pi-hook-logging-shitty-state"
+    "url": "https://github.com/EmZod/pi-subagent-with-logging"
   },
   "type": "module",
   "peerDependencies": {

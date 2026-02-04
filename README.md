@@ -10,13 +10,13 @@ Enables branching, rewinding, and forking agent execution paths through automati
 
 ```bash
 # Install globally
-pi install git:github.com/EmZod/pi-hook-logging-shitty-state
+pi install git:github.com/EmZod/pi-subagent-with-logging
 
 # Or install for project only
-pi install -l git:github.com/EmZod/pi-hook-logging-shitty-state
+pi install -l git:github.com/EmZod/pi-subagent-with-logging
 
 # Or try without installing
-pi -e git:github.com/EmZod/pi-hook-logging-shitty-state
+pi -e git:github.com/EmZod/pi-subagent-with-logging
 ```
 
 Once installed, the extension and skill are automatically loaded. No manual setup required.
@@ -25,7 +25,7 @@ Once installed, the extension and skill are automatically loaded. No manual setu
 
 ```bash
 # Clone
-git clone https://github.com/EmZod/pi-hook-logging-shitty-state.git ~/.pi/packages/shadow-git
+git clone https://github.com/EmZod/pi-subagent-with-logging.git ~/.pi/packages/shadow-git
 
 # Add to settings.json
 # In ~/.pi/agent/settings.json, add to "packages" array:
