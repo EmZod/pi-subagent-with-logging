@@ -1,6 +1,6 @@
 {
-  "name": "@emzod/pi-shadow-git",
-  "version": "1.0.0",
+  "name": "pi-shadow-git",
+  "version": "2.1.0",
   "description": "Git-based orchestration logging for pi subagents with Mission Control dashboard",
   "keywords": [
     "pi-package",
@@ -10,7 +10,10 @@
     "git",
     "logging",
     "subagent",
-    "mission-control"
+    "mission-control",
+    "claude",
+    "llm",
+    "ai-agents"
   ],
   "author": "EmZod",
   "license": "MIT",
@@ -18,6 +21,7 @@
     "type": "git",
     "url": "https://github.com/EmZod/pi-subagent-with-logging"
   },
+  "homepage": "https://github.com/EmZod/pi-subagent-with-logging#readme",
   "type": "module",
   "peerDependencies": {
     "@mariozechner/pi-coding-agent": "*",

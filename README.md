@@ -6,41 +6,26 @@ Enables branching, rewinding, and forking agent execution paths through automati
 
 ## Installation
 
-### Via pi (Recommended)
-
 ```bash
-# Install globally
+# Via npm (recommended)
+pi install npm:pi-shadow-git
+
+# Via git
 pi install git:github.com/EmZod/pi-subagent-with-logging
 
-# Or install for project only
-pi install -l git:github.com/EmZod/pi-subagent-with-logging
-
 # Or try without installing
-pi -e git:github.com/EmZod/pi-subagent-with-logging
+pi -e npm:pi-shadow-git
 ```
 
 Once installed, the extension and skill are automatically loaded. No manual setup required.
 
-### Manual Installation (Alternative)
-
-```bash
-# Clone
-git clone https://github.com/EmZod/pi-subagent-with-logging.git ~/.pi/packages/shadow-git
-
-# Add to settings.json
-# In ~/.pi/agent/settings.json, add to "packages" array:
-# "~/.pi/packages/shadow-git"
-```
-
 ## What's Included
-
-This package provides:
 
 | Resource | Description |
 |----------|-------------|
-| **Extension: shadow-git** | Commits workspace state after every turn, captures audit logs |
-| **Extension: mission-control** | Real-time TUI dashboard for monitoring agents |
-| **Skill: pi-subagent-orchestration** | Complete guide for orchestrating subagents with git logging |
+| **shadow-git extension** | Commits workspace state after every turn, captures audit logs |
+| **mission-control extension** | Real-time TUI dashboard for monitoring agents (`/mc`) |
+| **pi-subagent-orchestration skill** | Complete guide for orchestrating subagents with git logging |
 
 ## Features
 
@@ -60,7 +45,7 @@ mkdir -p "$WORKSPACE/agents/scout1"/{workspace,output}
 cd "$WORKSPACE"
 
 # 2. Write agent plan
-cat > agents/scout1/plan.md << 'EOF'
+cat > agents/scout1/plan.md << 'PLAN'
 # Plan: Research Task
 
 ## Objective
@@ -72,7 +57,7 @@ Research X and produce findings.
 
 ## Output
 - output/findings.md
-EOF
+PLAN
 
 # 3. Spawn agent with shadow-git
 PI_WORKSPACE_ROOT="$WORKSPACE" \
@@ -85,21 +70,17 @@ pi --max-turns 20 'Read plan.md and execute it.'
 
 ## Mission Control Dashboard
 
-Monitor multiple agents in real-time with the Mission Control TUI:
+Monitor multiple agents in real-time:
 
 ```
 /mc
-# or
-/mission-control
 ```
 
-**Dashboard Features:**
+**Features:**
 - Real-time status for all agents (running, done, error, pending)
 - Turn count, tool calls, error count per agent
 - Auto-refresh every 2 seconds
 - Scrollable list for 100s of agents
-- Sort by status, activity, or name
-- Detail panel for selected agent
 
 **Keyboard Controls:**
 | Key | Action |
@@ -125,17 +106,11 @@ Monitor multiple agents in real-time with the Mission Control TUI:
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `PI_WORKSPACE_ROOT` | Yes* | Root of the shadow git workspace |
+| `PI_WORKSPACE_ROOT` | Yes | Root of the shadow git workspace |
 | `PI_AGENT_NAME` | For logging | Agent name for commits and paths |
-| `PI_TARGET_REPOS` | No | Comma-separated target repo paths |
-| `PI_TARGET_BRANCH` | No | Branch name for commit linkage |
 | `PI_SHADOW_GIT_DISABLED` | No | Set to `1` to disable (killswitch) |
 
-*Required for both Mission Control and logging
-
-## Spawning Subagents
-
-For detailed orchestration patterns, see the included skill documentation. Key patterns:
+## Spawning Patterns
 
 ### Blocking (Sequential)
 ```bash
@@ -158,9 +133,7 @@ tmux new-session -d -s scout1 \
 
 ## Architecture
 
-### Per-Agent Git Repos
-
-Each agent has its own isolated git repository, eliminating lock conflicts:
+Each agent has its own isolated git repository:
 
 ```
 workspace/
@@ -168,62 +141,23 @@ workspace/
 └── agents/
     ├── scout1/
     │   ├── .git/                 ← Agent's OWN repo (isolated)
-    │   ├── audit.jsonl           ← Real-time log (NOT in git)
-    │   ├── state.json            ← Checkpoint state (IN git)
-    │   └── output/               ← Work output (IN git)
+    │   ├── audit.jsonl           ← Real-time log
+    │   └── output/               ← Work output
     └── scout2/
         ├── .git/                 ← Completely isolated
         └── ...
 ```
 
 **Benefits:**
-- **Zero lock conflicts**: Parallel agents never compete for `.git/index.lock`
-- **Turn-level commits**: ~10x fewer commits (per turn, not per tool)
-- **Clean separation**: `audit.jsonl` for observability, git for checkpoints
+- Zero lock conflicts between parallel agents
+- Turn-level commits (~10x fewer than per-tool)
+- Clean separation: `audit.jsonl` for observability, git for checkpoints
 
-## Audit Log
+## Links
 
-Events are appended to `agents/{name}/audit.jsonl`:
-
-```json
-{"ts":1704567890123,"event":"tool_call","agent":"scout1","turn":3,"tool":"write"}
-{"ts":1704567890456,"event":"tool_result","agent":"scout1","turn":3,"tool":"write"}
-{"ts":1704567890789,"event":"turn_end","agent":"scout1","turn":3,"toolResultCount":1}
-```
-
-Query with jq:
-
-```bash
-# Tool calls only
-jq 'select(.event == "tool_call")' agents/scout1/audit.jsonl
-
-# Errors
-jq 'select(.error == true)' agents/scout1/audit.jsonl
-```
-
-## Failure Handling
-
-The extension **fails open**:
-
-| Failure | Behavior |
-|---------|----------|
-| Git commit fails | Error logged to audit.jsonl, agent continues |
-| Audit file write fails | Error to stderr, agent continues |
-| Patch capture fails | Error logged, agent continues |
-
-## Killswitch
-
-During an incident, disable logging instantly:
-
-**Runtime:**
-```
-/shadow-git disable
-```
-
-**Environment variable:**
-```bash
-PI_SHADOW_GIT_DISABLED=1 pi ...
-```
+- **npm:** https://www.npmjs.com/package/pi-shadow-git
+- **GitHub:** https://github.com/EmZod/pi-subagent-with-logging
+- **Releases:** https://github.com/EmZod/pi-subagent-with-logging/releases
 
 ## License
 
