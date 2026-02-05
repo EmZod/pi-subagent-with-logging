@@ -1,6 +1,6 @@
 {
   "name": "pi-shadow-git",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "Git-based orchestration logging for pi subagents with Mission Control dashboard",
   "keywords": [
     "pi-package",
@@ -28,7 +28,11 @@
     "@mariozechner/pi-tui": "*"
   },
   "pi": {
-    "extensions": ["./extensions"],
-    "skills": ["./skills"]
+    "extensions": [
+      "./extensions"
+    ],
+    "skills": [
+      "./skills"
+    ]
   }
 }

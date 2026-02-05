@@ -1,5 +1,5 @@
 ---
-name: pi-subagent-orchestration-git-only
+name: pi-subagent-orchestration
 description: Orchestrate subagents in pi with git-based logging and Mission Control. Use when spawning multiple agents that need audit trails, rollback, branching, and real-time monitoring. Covers per-agent git repos, turn-level commits, workspace setup, and the shadow-git extension.
 ---
 
